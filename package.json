@@ -61,7 +61,7 @@
         },
         "flm-vscode.model": {
           "type": "string",
-          "default": "fastflowlm",
+          "default": "qwen3.5:2b",
           "description": "Model identifier sent to the FastFlowLM server."
         },
         "flm-vscode.apiKey": {

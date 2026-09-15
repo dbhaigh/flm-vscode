@@ -9,5 +9,9 @@
         "dist": true // set this to false to include "dist" folder in search results
     },
     // Turn off tsc task auto detection since we have the necessary tasks as npm scripts
-    "js/ts.tsc.autoDetect": "off"
+    "js/ts.tsc.autoDetect": "off",
+    "flm-vscode.serverUrl": "http://127.0.0.1:52625/v1",
+    "flm-vscode.model": "qwen3.5:2b",
+    "flm-vscode.serverCommand": "flm",
+    "flm-vscode.serverArgs": ["serve", "qwen3.5:2b", "--port", "52625"]
 }

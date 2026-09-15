@@ -2,26 +2,41 @@ import * as vscode from 'vscode';
 import { ChildProcess, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 
-type ChatMessage = { role: 'user' | 'assistant'; content: string };
+type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
+type ChatMessage = {
+	role: 'user' | 'assistant' | 'tool';
+	content: string | null;
+	tool_call_id?: string;
+	tool_calls?: ToolCall[];
+};
+type OpenAITool = { type: 'function'; function: { name: string; description: string; parameters: object } };
 type ServerState = 'stopped' | 'starting' | 'running' | 'error';
 
 class FastFlowLMClient {
 	private get settings() { return vscode.workspace.getConfiguration('flm-vscode'); }
 	private get baseUrl() { return this.settings.get<string>('serverUrl', 'http://127.0.0.1:8000/v1').replace(/\/$/, ''); }
+	private async request(url: string, init?: RequestInit): Promise<Response> {
+		try {
+			return await fetch(url, init);
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			throw new Error(`Cannot reach FastFlowLM at ${this.baseUrl}. Start the server or update FastFlowLM: Server URL. ${detail}`);
+		}
+	}
 	private headers(): Record<string, string> {
 		const apiKey = this.settings.get<string>('apiKey', '').trim();
 		return { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) };
 	}
 
 	public async listModels(): Promise<string[]> {
-		const response = await fetch(`${this.baseUrl}/models`, { headers: this.headers() });
+		const response = await this.request(`${this.baseUrl}/models`, { headers: this.headers() });
 		if (!response.ok) {throw new Error(`Model request failed (${response.status}).`);}
 		const payload = await response.json() as { data?: Array<{ id?: string }> };
 		return (payload.data ?? []).map(model => model.id).filter((id): id is string => Boolean(id));
 	}
 
 	public async chat(messages: ChatMessage[], model: string): Promise<string> {
-		const response = await fetch(`${this.baseUrl}/chat/completions`, {
+		const response = await this.request(`${this.baseUrl}/chat/completions`, {
 			method: 'POST', headers: this.headers(), body: JSON.stringify({ model, messages, stream: false })
 		});
 		if (!response.ok) {throw new Error(`Chat request failed (${response.status}): ${(await response.text()).slice(0, 240)}`);}
@@ -31,14 +46,27 @@ class FastFlowLMClient {
 		return content;
 	}
 
-	public async streamChat(messages: ChatMessage[], model: string, token: vscode.CancellationToken, onText: (text: string) => void): Promise<void> {
+	public async streamChat(
+		messages: ChatMessage[],
+		model: string,
+		tools: OpenAITool[],
+		toolMode: vscode.LanguageModelChatToolMode,
+		token: vscode.CancellationToken,
+		onText: (text: string) => void,
+		onToolCall: (call: ToolCall) => void
+	): Promise<void> {
 		const controller = new AbortController();
 		const cancellation = token.onCancellationRequested(() => controller.abort());
 		try {
-			const response = await fetch(`${this.baseUrl}/chat/completions`, {
+			const response = await this.request(`${this.baseUrl}/chat/completions`, {
 				method: 'POST',
 				headers: this.headers(),
-				body: JSON.stringify({ model, messages, stream: true }),
+				body: JSON.stringify({
+					model,
+					messages,
+					stream: true,
+					...(tools.length ? { tools, tool_choice: toolMode === vscode.LanguageModelChatToolMode.Required ? 'required' : 'auto' } : {})
+				}),
 				signal: controller.signal
 			});
 			if (!response.ok) {throw new Error(`Chat request failed (${response.status}): ${(await response.text()).slice(0, 240)}`);}
@@ -47,6 +75,7 @@ class FastFlowLMClient {
 			const reader = response.body.getReader();
 			const decoder = new TextDecoder();
 			let buffer = '';
+			const toolCalls = new Map<number, ToolCall>();
 			while (true) {
 				const { done, value } = await reader.read();
 				buffer += decoder.decode(value, { stream: !done });
@@ -57,11 +86,24 @@ class FastFlowLMClient {
 						if (!line.startsWith('data:')) {continue;}
 						const data = line.slice(5).trim();
 						if (data === '[DONE]') {return;}
-						const content = (JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]?.delta?.content;
+						const delta = (JSON.parse(data) as {
+							choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } }>
+						}).choices?.[0]?.delta;
+						const content = delta?.content;
 						if (content) {onText(content);}
+						for (const item of delta?.tool_calls ?? []) {
+							const index = item.index ?? 0;
+							const existing = toolCalls.get(index) ?? { id: item.id ?? `fastflowlm-tool-${index}`, type: 'function' as const, function: { name: '', arguments: '' } };
+							existing.function.name += item.function?.name ?? '';
+							existing.function.arguments += item.function?.arguments ?? '';
+							toolCalls.set(index, existing);
+						}
 					}
 				}
 				if (done) {break;}
+			}
+			for (const call of toolCalls.values()) {
+				onToolCall({ ...call, function: { ...call.function, arguments: call.function.arguments || '{}' } });
 			}
 		} finally {
 			cancellation.dispose();
@@ -86,22 +128,53 @@ class FastFlowLMProvider implements vscode.LanguageModelChatProvider {
 			detail: 'FastFlowLM',
 			maxInputTokens: 32768,
 			maxOutputTokens: 4096,
-			capabilities: {}
+			capabilities: { toolCalling: true }
 		}));
 	}
 
 	public async provideLanguageModelChatResponse(
 		model: vscode.LanguageModelChatInformation,
 		messages: readonly vscode.LanguageModelChatRequestMessage[],
-		_options: vscode.ProvideLanguageModelChatResponseOptions,
+		options: vscode.ProvideLanguageModelChatResponseOptions,
 		progress: vscode.Progress<vscode.LanguageModelResponsePart>,
 		token: vscode.CancellationToken
 	): Promise<void> {
-		const requestMessages: ChatMessage[] = messages.map(message => ({
-			role: (message.role === vscode.LanguageModelChatMessageRole.Assistant ? 'assistant' : 'user') as ChatMessage['role'],
-			content: message.content.map(part => part instanceof vscode.LanguageModelTextPart ? part.value : '').join('')
-		})).filter(message => message.content.length > 0);
-		await this.client.streamChat(requestMessages, model.id, token, text => progress.report(new vscode.LanguageModelTextPart(text)));
+		const requestMessages: ChatMessage[] = [];
+		for (const message of messages) {
+			const text = message.content.filter(part => part instanceof vscode.LanguageModelTextPart).map(part => part.value).join('');
+			const toolCalls = message.content.filter(part => part instanceof vscode.LanguageModelToolCallPart) as vscode.LanguageModelToolCallPart[];
+			const toolResults = message.content.filter(part => part instanceof vscode.LanguageModelToolResultPart) as vscode.LanguageModelToolResultPart[];
+			if (toolCalls.length > 0) {
+				requestMessages.push({
+					role: 'assistant',
+					content: text || null,
+					tool_calls: toolCalls.map(call => ({ id: call.callId, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.input) } }))
+				});
+			} else if (toolResults.length > 0) {
+				for (const result of toolResults) {
+					requestMessages.push({ role: 'tool', tool_call_id: result.callId, content: result.content.filter(part => part instanceof vscode.LanguageModelTextPart).map(part => part.value).join('') });
+				}
+			} else if (text) {
+				requestMessages.push({ role: message.role === vscode.LanguageModelChatMessageRole.Assistant ? 'assistant' : 'user', content: text });
+			}
+		}
+		const tools: OpenAITool[] = (options.tools ?? []).map(tool => ({
+			type: 'function',
+			function: { name: tool.name, description: tool.description, parameters: tool.inputSchema ?? { type: 'object', properties: {} } }
+		}));
+		await this.client.streamChat(
+			requestMessages,
+			model.id,
+			tools,
+			options.toolMode,
+			token,
+			text => progress.report(new vscode.LanguageModelTextPart(text)),
+			call => {
+				let input: object = {};
+				try { input = JSON.parse(call.function.arguments) as object; } catch { /* The server returned malformed tool JSON. */ }
+				progress.report(new vscode.LanguageModelToolCallPart(call.id, call.function.name, input));
+			}
+		);
 	}
 
 	public provideTokenCount(_model: vscode.LanguageModelChatInformation, text: string | vscode.LanguageModelChatRequestMessage): Thenable<number> {
