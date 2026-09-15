@@ -1,0 +1,115 @@
+{
+  "name": "flm-vscode",
+  "displayName": "FastFlowLM VS Code",
+  "description": "Interact with and manage a FastFlowLM server from VS Code",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.137.0"
+  },
+  "categories": [
+    "Chat"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "flm-vscode.openChat",
+        "title": "FastFlowLM: Open Chat"
+      },
+      {
+        "command": "flm-vscode.checkServer",
+        "title": "FastFlowLM: Check Server"
+      },
+      {
+        "command": "flm-vscode.startServer",
+        "title": "FastFlowLM: Start Server"
+      },
+      {
+        "command": "flm-vscode.stopServer",
+        "title": "FastFlowLM: Stop Server"
+      },
+      {
+        "command": "flm-vscode.restartServer",
+        "title": "FastFlowLM: Restart Server"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "flm-vscode.openChat" },
+        { "command": "flm-vscode.checkServer" },
+        { "command": "flm-vscode.startServer" },
+        { "command": "flm-vscode.stopServer" },
+        { "command": "flm-vscode.restartServer" }
+      ]
+    },
+    "configuration": {
+      "title": "FastFlowLM",
+      "properties": {
+        "flm-vscode.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000/v1",
+          "description": "Base URL for the FastFlowLM OpenAI-compatible API."
+        },
+        "flm-vscode.model": {
+          "type": "string",
+          "default": "fastflowlm",
+          "description": "Model identifier sent to the FastFlowLM server."
+        },
+        "flm-vscode.apiKey": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Optional API key for the FastFlowLM server.",
+          "password": true
+        },
+        "flm-vscode.serverCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Optional command used to start the local FastFlowLM server."
+        },
+        "flm-vscode.serverArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Arguments passed to the configured FastFlowLM server command."
+        },
+        "flm-vscode.serverCwd": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory for the configured FastFlowLM server command. Defaults to the first workspace folder."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.137.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.x",
+    "typescript-eslint": "^8.61.1",
+    "eslint": "^10.5.0",
+    "esbuild": "^0.28.1",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^6.0.3",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0"
+  },
+  "overrides": {
+    "diff": "^8.0.4",
+    "serialize-javascript": "^7.0.6"
+  }
+}
