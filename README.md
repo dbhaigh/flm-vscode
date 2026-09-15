@@ -74,3 +74,7 @@ Press `F5` in VS Code to launch an Extension Development Host.
 ## Current Scope
 
 The extension manages one local server process. FastFlowLM receives VS Code tool schemas and conversation context, then returns text or tool calls through the native Chat provider API. The server must support OpenAI-compatible chat completions and function/tool calling.
+
+## NOTE
+
+This is a work-in-progress, there's a number of things I want to implement - like te FLM server being a bit more chatty in the terminal - I want to see the status and the thinking process , not just a single word

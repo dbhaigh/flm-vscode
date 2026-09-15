@@ -15,7 +15,7 @@ const MAX_INPUT_TOKENS = 24576;
 const MAX_OUTPUT_TOKENS = 4096;
 const CHARS_PER_TOKEN = 4;
 
-function limitMessages(messages: ChatMessage[]): ChatMessage[] {
+export function limitMessages(messages: ChatMessage[]): ChatMessage[] {
 	let remaining = MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
 	const limited: ChatMessage[] = [];
 	for (let index = messages.length - 1; index >= 0 && remaining > 0; index--) {
@@ -32,7 +32,7 @@ function limitMessages(messages: ChatMessage[]): ChatMessage[] {
 	return limited;
 }
 
-class FastFlowLMClient {
+export class FastFlowLMClient {
 	private get settings() { return vscode.workspace.getConfiguration('flm-vscode'); }
 	private get baseUrl() { return this.settings.get<string>('serverUrl', 'http://127.0.0.1:8000/v1').replace(/\/$/, ''); }
 	private async request(url: string, init?: RequestInit): Promise<Response> {

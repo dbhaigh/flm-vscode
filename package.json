@@ -1,13 +1,14 @@
 {
   "name": "flm-vscode",
-  "displayName": "FastFlowLM VS Code",
+  "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.0.1",
-  "publisher": "dbhaigh",
+  "version": "0.0.101",
+  "publisher": "AndrewHaigh",
   "author": {
-    "name": "David Haigh"
+    "name": "Andrew Haigh"
   },
-  "license": "MIT",
+  "icon": "flm-vscode.png",
+  "license": "See License in LICENSE",
   "repository": {
     "type": "git",
     "url": "https://github.com/dbhaigh/flm-vscode"
@@ -27,7 +28,7 @@
     "vscode": "^1.137.0"
   },
   "categories": [
-    "Chat"
+    "AI"
   ],
   "activationEvents": [
     "onLanguageModelChatProvider:fastflowlm"
