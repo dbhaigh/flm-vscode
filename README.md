@@ -74,6 +74,7 @@ Interact with and manage a FastFlowLM server from Visual Studio Code.
 ## Features
 
 - Chat with a FastFlowLM server through a webview panel.
+- Register FastFlowLM as a native VS Code Chat language model provider, so its models appear in the Chat model picker alongside Copilot and other providers.
 - Discover available models through the OpenAI-compatible `/models` endpoint.
 - Check server connectivity from the Command Palette.
 - Start, stop, and restart a local server process from VS Code.
@@ -111,12 +112,12 @@ For example, a local Python server can be managed with:
 
 ## Usage
 
-1. Run **FastFlowLM: Open Chat** from the Command Palette.
-2. Use **Refresh models** to load models from the server.
-3. Select a model, enter a prompt, and press **Send**. `Ctrl+Enter` also sends.
-4. Use **Start**, **Stop**, or **Restart** when a local server command is configured.
+1. Start the Extension Development Host with `F5`.
+2. Open the Chat view and select a `FastFlowLM` model from the model picker. VS Code asks the provider for available models; if the server is offline, the configured model remains visible and requests report the connection error.
+3. Use **FastFlowLM: Open Chat** for the optional standalone panel, where **Refresh models**, **Start**, **Stop**, and **Restart** are available.
+4. Use **FastFlowLM: Check Server** from the Command Palette to test connectivity.
 
-The extension does not assume how FastFlowLM is installed or launched. Configure the command that matches your server installation.
+The extension does not assume how FastFlowLM is installed or launched. Configure the command that matches your server installation. Native Chat requests use streaming responses when the server supports OpenAI-compatible SSE streaming.
 
 ## Development
 

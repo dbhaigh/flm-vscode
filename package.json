@@ -9,7 +9,9 @@
   "categories": [
     "Chat"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguageModelChatProvider:fastflowlm"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -43,6 +45,12 @@
         { "command": "flm-vscode.restartServer" }
       ]
     },
+    "languageModelChatProviders": [
+      {
+        "vendor": "fastflowlm",
+        "displayName": "FastFlowLM"
+      }
+    ],
     "configuration": {
       "title": "FastFlowLM",
       "properties": {

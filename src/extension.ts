@@ -30,6 +30,84 @@ class FastFlowLMClient {
 		if (!content) {throw new Error('FastFlowLM returned no assistant content.');}
 		return content;
 	}
+
+	public async streamChat(messages: ChatMessage[], model: string, token: vscode.CancellationToken, onText: (text: string) => void): Promise<void> {
+		const controller = new AbortController();
+		const cancellation = token.onCancellationRequested(() => controller.abort());
+		try {
+			const response = await fetch(`${this.baseUrl}/chat/completions`, {
+				method: 'POST',
+				headers: this.headers(),
+				body: JSON.stringify({ model, messages, stream: true }),
+				signal: controller.signal
+			});
+			if (!response.ok) {throw new Error(`Chat request failed (${response.status}): ${(await response.text()).slice(0, 240)}`);}
+			if (!response.body) {throw new Error('FastFlowLM returned an empty response stream.');}
+
+			const reader = response.body.getReader();
+			const decoder = new TextDecoder();
+			let buffer = '';
+			while (true) {
+				const { done, value } = await reader.read();
+				buffer += decoder.decode(value, { stream: !done });
+				const events = buffer.split(/\r?\n\r?\n/);
+				buffer = events.pop() ?? '';
+				for (const event of events) {
+					for (const line of event.split(/\r?\n/)) {
+						if (!line.startsWith('data:')) {continue;}
+						const data = line.slice(5).trim();
+						if (data === '[DONE]') {return;}
+						const content = (JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]?.delta?.content;
+						if (content) {onText(content);}
+					}
+				}
+				if (done) {break;}
+			}
+		} finally {
+			cancellation.dispose();
+		}
+	}
+}
+
+class FastFlowLMProvider implements vscode.LanguageModelChatProvider {
+	public constructor(private readonly client: FastFlowLMClient) {}
+
+	public async provideLanguageModelChatInformation(): Promise<vscode.LanguageModelChatInformation[]> {
+		const configuredModel = vscode.workspace.getConfiguration('flm-vscode').get<string>('model', 'fastflowlm');
+		let models: string[];
+		try { models = await this.client.listModels(); } catch { models = []; }
+		const available = models.length > 0 ? models : [configuredModel];
+		return available.map(id => ({
+			id,
+			name: id,
+			family: 'fastflowlm',
+			version: '1',
+			tooltip: `FastFlowLM model ${id}`,
+			detail: 'FastFlowLM',
+			maxInputTokens: 32768,
+			maxOutputTokens: 4096,
+			capabilities: {}
+		}));
+	}
+
+	public async provideLanguageModelChatResponse(
+		model: vscode.LanguageModelChatInformation,
+		messages: readonly vscode.LanguageModelChatRequestMessage[],
+		_options: vscode.ProvideLanguageModelChatResponseOptions,
+		progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+		token: vscode.CancellationToken
+	): Promise<void> {
+		const requestMessages: ChatMessage[] = messages.map(message => ({
+			role: (message.role === vscode.LanguageModelChatMessageRole.Assistant ? 'assistant' : 'user') as ChatMessage['role'],
+			content: message.content.map(part => part instanceof vscode.LanguageModelTextPart ? part.value : '').join('')
+		})).filter(message => message.content.length > 0);
+		await this.client.streamChat(requestMessages, model.id, token, text => progress.report(new vscode.LanguageModelTextPart(text)));
+	}
+
+	public provideTokenCount(_model: vscode.LanguageModelChatInformation, text: string | vscode.LanguageModelChatRequestMessage): Thenable<number> {
+		const value = typeof text === 'string' ? text : text.content.map(part => part instanceof vscode.LanguageModelTextPart ? part.value : '').join('');
+		return Promise.resolve(Math.ceil(value.length / 4));
+	}
 }
 
 class ServerManager {
@@ -125,6 +203,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const server = new ServerManager();
 	const chat = new ChatPanel(client, server);
 	context.subscriptions.push(
+		vscode.lm.registerLanguageModelChatProvider('fastflowlm', new FastFlowLMProvider(client)),
 		vscode.commands.registerCommand('flm-vscode.openChat', () => chat.show()),
 		vscode.commands.registerCommand('flm-vscode.checkServer', async () => {
 			try { const models = await client.listModels(); void vscode.window.showInformationMessage(`FastFlowLM is reachable. ${models.length} model(s) available.`); }
