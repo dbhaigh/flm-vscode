@@ -11,6 +11,26 @@ type ChatMessage = {
 };
 type OpenAITool = { type: 'function'; function: { name: string; description: string; parameters: object } };
 type ServerState = 'stopped' | 'starting' | 'running' | 'error';
+const MAX_INPUT_TOKENS = 24576;
+const MAX_OUTPUT_TOKENS = 4096;
+const CHARS_PER_TOKEN = 4;
+
+function limitMessages(messages: ChatMessage[]): ChatMessage[] {
+	let remaining = MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
+	const limited: ChatMessage[] = [];
+	for (let index = messages.length - 1; index >= 0 && remaining > 0; index--) {
+		const message = messages[index];
+		const content = message.content ?? '';
+		if (content.length <= remaining) {
+			limited.unshift(message);
+			remaining -= content.length;
+			continue;
+		}
+		limited.unshift({ ...message, content: content.slice(-remaining) });
+		break;
+	}
+	return limited;
+}
 
 class FastFlowLMClient {
 	private get settings() { return vscode.workspace.getConfiguration('flm-vscode'); }
@@ -37,7 +57,7 @@ class FastFlowLMClient {
 
 	public async chat(messages: ChatMessage[], model: string): Promise<string> {
 		const response = await this.request(`${this.baseUrl}/chat/completions`, {
-			method: 'POST', headers: this.headers(), body: JSON.stringify({ model, messages, stream: false })
+			method: 'POST', headers: this.headers(), body: JSON.stringify({ model, messages, stream: false, max_tokens: MAX_OUTPUT_TOKENS })
 		});
 		if (!response.ok) {throw new Error(`Chat request failed (${response.status}): ${(await response.text()).slice(0, 240)}`);}
 		const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
@@ -55,6 +75,7 @@ class FastFlowLMClient {
 		onText: (text: string) => void,
 		onToolCall: (call: ToolCall) => void
 	): Promise<void> {
+		messages = limitMessages(messages);
 		const controller = new AbortController();
 		const cancellation = token.onCancellationRequested(() => controller.abort());
 		try {
@@ -65,6 +86,7 @@ class FastFlowLMClient {
 					model,
 					messages,
 					stream: true,
+					max_tokens: MAX_OUTPUT_TOKENS,
 					...(tools.length ? { tools, tool_choice: toolMode === vscode.LanguageModelChatToolMode.Required ? 'required' : 'auto' } : {})
 				}),
 				signal: controller.signal
@@ -75,8 +97,9 @@ class FastFlowLMClient {
 			const reader = response.body.getReader();
 			const decoder = new TextDecoder();
 			let buffer = '';
+			let completed = false;
 			const toolCalls = new Map<number, ToolCall>();
-			while (true) {
+			while (!completed) {
 				const { done, value } = await reader.read();
 				buffer += decoder.decode(value, { stream: !done });
 				const events = buffer.split(/\r?\n\r?\n/);
@@ -85,7 +108,7 @@ class FastFlowLMClient {
 					for (const line of event.split(/\r?\n/)) {
 						if (!line.startsWith('data:')) {continue;}
 						const data = line.slice(5).trim();
-						if (data === '[DONE]') {return;}
+						if (data === '[DONE]') {completed = true; break;}
 						const delta = (JSON.parse(data) as {
 							choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } }>
 						}).choices?.[0]?.delta;
@@ -100,7 +123,7 @@ class FastFlowLMClient {
 						}
 					}
 				}
-				if (done) {break;}
+				if (done) {completed = true;}
 			}
 			for (const call of toolCalls.values()) {
 				onToolCall({ ...call, function: { ...call.function, arguments: call.function.arguments || '{}' } });
@@ -126,8 +149,8 @@ class FastFlowLMProvider implements vscode.LanguageModelChatProvider {
 			version: '1',
 			tooltip: `FastFlowLM model ${id}`,
 			detail: 'FastFlowLM',
-			maxInputTokens: 32768,
-			maxOutputTokens: 4096,
+			maxInputTokens: MAX_INPUT_TOKENS,
+			maxOutputTokens: MAX_OUTPUT_TOKENS,
 			capabilities: { toolCalling: true }
 		}));
 	}

@@ -32,10 +32,34 @@ For example, a local Python server can be managed with:
 ```
 
 ## Usage
-4. Use **FastFlowLM: Check Server** from the Command Palette to test connectivity.
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+
+1. Start a FastFlowLM server, or configure `flm-vscode.serverCommand` and use **FastFlowLM: Start Server**.
+2. Use **FastFlowLM: Check Server** from the Command Palette to test connectivity.
+3. Select a FastFlowLM model in the VS Code Chat model picker.
 
 The extension does not assume how FastFlowLM is installed or launched. Configure the command that matches your server installation. Native Chat requests use streaming responses when the server supports OpenAI-compatible SSE streaming.
+
+## Requirements
+
+- VS Code 1.137.0 or newer.
+- A FastFlowLM server exposing an OpenAI-compatible `/v1` API.
+- The configured model must support chat completions. Tool calling requires server support for OpenAI-compatible function tools.
+
+## Data and security
+
+Chat messages, tool schemas, and tool results are sent to the configured FastFlowLM server. This extension does not send requests to a hosted service of its own. API keys are sent as bearer tokens and should be configured in user settings rather than committed to workspace settings.
+
+The extension starts the configured server command with the current user permissions. Only configure commands and working directories you trust.
+
+## Troubleshooting
+
+- **Cannot reach server:** verify `flm-vscode.serverUrl`, then run **FastFlowLM: Check Server**.
+- **Model not found:** refresh models in the FastFlowLM chat panel and make sure `flm-vscode.model` matches the server's `/models` response.
+- **Context or token limit errors:** reduce conversation history or increase the server KV capacity. Requests reserve up to 24,576 input tokens and 4,096 output tokens.
+
+## Known limitations
+
+Token counting uses a conservative character-based estimate because the extension does not have access to each model's tokenizer. The server remains authoritative for its actual context window.
 
 ## Development
 

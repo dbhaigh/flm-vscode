@@ -3,6 +3,26 @@
   "displayName": "FastFlowLM VS Code",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
   "version": "0.0.1",
+  "publisher": "dbhaigh",
+  "author": {
+    "name": "David Haigh"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dbhaigh/flm-vscode"
+  },
+  "homepage": "https://github.com/dbhaigh/flm-vscode",
+  "bugs": {
+    "url": "https://github.com/dbhaigh/flm-vscode/issues"
+  },
+  "keywords": [
+    "language model",
+    "chat",
+    "fastflowlm",
+    "openai-compatible",
+    "local llm"
+  ],
   "engines": {
     "vscode": "^1.137.0"
   },
@@ -48,7 +68,17 @@
     "languageModelChatProviders": [
       {
         "vendor": "fastflowlm",
-        "displayName": "FastFlowLM"
+        "displayName": "FastFlowLM",
+        "configuration": {
+          "title": "FastFlowLM",
+          "properties": {
+            "apiKey": {
+              "type": "string",
+              "description": "Optional API key for the FastFlowLM server.",
+              "secret": true
+            }
+          }
+        }
       }
     ],
     "configuration": {
