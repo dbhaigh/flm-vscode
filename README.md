@@ -24,6 +24,9 @@ Open **Settings** and search for **FastFlowLM**:
 - `flm-vscode.serverArgs`: Arguments passed to the local server command.
 - `flm-vscode.serverCwd`: Optional working directory for the server process.
 - `flm-vscode.checkForUpdates`: Check FLM availability and releases when the extension activates. Defaults to `true`.
+- `flm-vscode.debugStreaming`: Include raw streaming responses and model reasoning in activity output. Defaults to `false`.
+
+When the configured model is unavailable, the extension selects the first model reported by the server. The `@flm` participant also includes earlier prompts and responses from the current participant conversation.
 
 For example, a local Python server can be managed with:
 
@@ -43,8 +46,6 @@ For example, a local Python server can be managed with:
 4. In VS Code Chat, invoke `@flm` and use a slash command such as `/status`, or send a normal prompt to talk directly to the configured FastFlowLM model.
 5. Select a FastFlowLM model in the VS Code Chat model picker.
 
-6. you can interact withthe flm server directly in chat via the @flm chat partciipant
-
 The chat panel displays live activity while a request runs, including model download/load messages, server status events, reasoning progress, and streamed response text. When the extension starts the server as a child process, its stdout and stderr are also shown in the chat and in the `FastFlowLM` output channel. Use **FastFlowLM: Show Activity Log** to view the complete activity history. A separately managed server must include its download/load activity in the OpenAI-compatible streaming response for the extension to display it.
 
 The extension does not assume how FastFlowLM is installed or launched. Configure the command that matches your server installation. Native Chat requests use streaming responses when the server supports OpenAI-compatible SSE streaming.
@@ -53,15 +54,16 @@ The extension does not assume how FastFlowLM is installed or launched. Configure
 
 - VS Code 1.137.0 or newer.
 - A FastFlowLM server exposing an OpenAI-compatible `/v1` API.
-	- if a FastFlowLM server isn't available, the system will prompt for permission to downlad and install the latest version
-	- the system will also check the version of flm that is installed, and prompt to download and install the latest version
+- If FastFlowLM is not available, the extension can prompt to download and install the latest Windows release.
+- The extension can check the installed `flm` version and prompt to install a newer release.
+- Downloaded Windows installers are checked for a valid Authenticode signature before execution.
 - The configured model must support chat completions. Tool calling requires server support for OpenAI-compatible function tools.
 
 ## Data and security
 
 Chat messages, tool schemas, and tool results are sent to the configured FastFlowLM server. This extension does not send requests to a hosted service of its own. API keys are sent as bearer tokens and should be configured in user settings rather than committed to workspace settings.
 
-The extension starts the configured server command with the current user permissions. Only configure commands and working directories you trust.
+The extension starts the configured server command with the current user permissions. Only configure commands and working directories you trust. Raw streaming output is disabled by default because it may contain prompts, reasoning, tool results, or other sensitive content.
 
 ## Troubleshooting
 
@@ -86,9 +88,3 @@ Press `F5` in VS Code to launch an Extension Development Host.
 ## Current Scope
 
 The extension manages one local server process. FastFlowLM receives VS Code tool schemas and conversation context, then returns text or tool calls through the native Chat provider API. The server must support OpenAI-compatible chat completions and function/tool calling.
-
-## NOTE
-
-This is a work-in-progress, there's a number of things I want to implement - like te FLM server being a bit more chatty in the terminal - I want to see the status and the thinking process , not just a single word
-
-Yeah, it's very chatty now - just open the dedicated chat window and watch the noise

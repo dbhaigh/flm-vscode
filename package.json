@@ -2,7 +2,7 @@
   "name": "flm-vscode",
   "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "AndrewHaigh",
   "author": {
     "name": "Andrew Haigh"
@@ -148,6 +148,11 @@
           "type": "boolean",
           "default": true,
           "description": "Check for the FLM executable and newer FastFlowLM releases when the extension activates."
+        },
+        "flm-vscode.debugStreaming": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include raw streaming responses and model reasoning in the activity log and dedicated chat panel."
         }
       }
     }

@@ -79,12 +79,16 @@ suite('Extension Test Suite', () => {
 		try {
 			const client = new FastFlowLMClient(status => statuses.push(status));
 			assert.deepStrictEqual(await client.listModels(), ['test-model']);
+			assert.strictEqual(await client.resolveModel('missing-model'), 'test-model');
 			assert.strictEqual(await client.chat([{ role: 'user', content: 'hello' }], 'test-model'), 'test reply');
 			assert.strictEqual(receivedBody?.model, 'test-model');
 			assert.strictEqual(receivedBody?.stream, false);
 			assert.deepStrictEqual(statuses, [
 				`Checking available models at http://127.0.0.1:${address.port}/v1/models.`,
 				'Available models: test-model.',
+				`Checking available models at http://127.0.0.1:${address.port}/v1/models.`,
+				'Available models: test-model.',
+				'Configured model "missing-model" is unavailable; using "test-model".',
 				'Sending task to model "test-model".',
 				'Model "test-model" completed the task.'
 			]);
@@ -112,7 +116,9 @@ suite('Extension Test Suite', () => {
 		assert.ok(address && typeof address !== 'string');
 		const configuration = vscode.workspace.getConfiguration('flm-vscode');
 		const originalUrl = configuration.get<string>('serverUrl');
+		const originalDebugStreaming = configuration.get<boolean>('debugStreaming');
 		await configuration.update('serverUrl', `http://127.0.0.1:${address.port}/v1`, vscode.ConfigurationTarget.Global);
+		await configuration.update('debugStreaming', true, vscode.ConfigurationTarget.Global);
 		try {
 			const client = new FastFlowLMClient();
 			let response = '';
@@ -123,10 +129,60 @@ suite('Extension Test Suite', () => {
 			);
 			cancellation.dispose();
 			assert.strictEqual(response, 'reply');
-			assert.deepStrictEqual(activity, ['loading model from registry', 'Downloading model', 'model loaded from local cache', 'model weights loaded']);
+			assert.deepStrictEqual(activity, ['loading model from registry', 'Downloading model', 'model loaded from local cache', 'model weights loaded', 'checking the prompt']);
 			assert.ok(raw.some(chunk => chunk.includes('Downloading model')));
 			assert.ok(raw.some(chunk => chunk.includes('[model reasoning] checking the prompt')));
 			assert.ok(raw.some(chunk => chunk.includes('content-type=text/event-stream')));
+		} finally {
+			await configuration.update('serverUrl', originalUrl, vscode.ConfigurationTarget.Global);
+			await configuration.update('debugStreaming', originalDebugStreaming, vscode.ConfigurationTarget.Global);
+			await close(server);
+		}
+	});
+
+	test('accepts multiline SSE data fields', async () => {
+		const server = createServer((_request, response) => {
+			response.setHeader('Content-Type', 'text/event-stream');
+			response.end('data: {"choices":[\ndata: {"delta":{"content":"reply"}}]}\n\ndata: [DONE]\n\n');
+		});
+		await listen(server);
+		const address = server.address();
+		assert.ok(address && typeof address !== 'string');
+		const configuration = vscode.workspace.getConfiguration('flm-vscode');
+		const originalUrl = configuration.get<string>('serverUrl');
+		await configuration.update('serverUrl', `http://127.0.0.1:${address.port}/v1`, vscode.ConfigurationTarget.Global);
+		try {
+			const client = new FastFlowLMClient();
+			let response = '';
+			const cancellation = new vscode.CancellationTokenSource();
+			await client.streamChat([{ role: 'user', content: 'hello' }], 'test-model', [], vscode.LanguageModelChatToolMode.Auto, cancellation.token, text => response += text, () => {});
+			cancellation.dispose();
+			assert.strictEqual(response, 'reply');
+		} finally {
+			await configuration.update('serverUrl', originalUrl, vscode.ConfigurationTarget.Global);
+			await close(server);
+		}
+	});
+
+	test('rejects a stream that closes before [DONE]', async () => {
+		const server = createServer((_request, response) => {
+			response.setHeader('Content-Type', 'text/event-stream');
+			response.end('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n');
+		});
+		await listen(server);
+		const address = server.address();
+		assert.ok(address && typeof address !== 'string');
+		const configuration = vscode.workspace.getConfiguration('flm-vscode');
+		const originalUrl = configuration.get<string>('serverUrl');
+		await configuration.update('serverUrl', `http://127.0.0.1:${address.port}/v1`, vscode.ConfigurationTarget.Global);
+		try {
+			const client = new FastFlowLMClient();
+			const cancellation = new vscode.CancellationTokenSource();
+			await assert.rejects(
+				client.streamChat([{ role: 'user', content: 'hello' }], 'test-model', [], vscode.LanguageModelChatToolMode.Auto, cancellation.token, () => {}, () => {}),
+				/FastFlowLM closed the response stream before \[DONE\]/
+			);
+			cancellation.dispose();
 		} finally {
 			await configuration.update('serverUrl', originalUrl, vscode.ConfigurationTarget.Global);
 			await close(server);

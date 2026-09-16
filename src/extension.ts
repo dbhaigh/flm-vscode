@@ -19,6 +19,7 @@ type ServerStarter = () => Promise<void>;
 const MAX_INPUT_TOKENS = 24576;
 const MAX_OUTPUT_TOKENS = 4096;
 const CHARS_PER_TOKEN = 4;
+const STREAM_TIMEOUT_MS = 120_000;
 const FLM_INSTALLER_URL = 'https://github.com/ROCm/FastFlowLM/releases/latest/download/flm-setup.msi';
 const FLM_LATEST_RELEASE_API = 'https://api.github.com/repos/ROCm/FastFlowLM/releases/latest';
 
@@ -64,6 +65,17 @@ async function latestFlmVersion(): Promise<string | undefined> {
 	}
 }
 
+function verifyWindowsInstallerSignature(installerPath: string): void {
+	try {
+		execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$signature = Get-AuthenticodeSignature -LiteralPath ([Environment]::GetEnvironmentVariable('FLM_INSTALLER_PATH')); if ($signature.Status -ne 'Valid') { exit 1 }"], {
+			stdio: 'ignore',
+			env: { ...process.env, FLM_INSTALLER_PATH: installerPath }
+		});
+	} catch {
+		throw new Error('FastFlowLM installer signature validation failed. The installer was not run.');
+	}
+}
+
 export async function downloadAndInstallFlm(reportStatus: StatusReporter = () => {}): Promise<void> {
 	if (process.platform !== 'win32') {throw new Error('Automatic FLM installation is currently supported on Windows only.');}
 	const installerPath = join(tmpdir(), `flm-setup-${Date.now()}.msi`);
@@ -72,6 +84,8 @@ export async function downloadAndInstallFlm(reportStatus: StatusReporter = () =>
 		const response = await fetch(FLM_INSTALLER_URL);
 		if (!response.ok) {throw new Error(`FastFlowLM installer download failed (${response.status}).`);}
 		await fs.writeFile(installerPath, Buffer.from(await response.arrayBuffer()));
+		reportStatus('Verifying the FastFlowLM installer signature.');
+		verifyWindowsInstallerSignature(installerPath);
 		reportStatus('Starting the FastFlowLM installer.');
 		await new Promise<void>((resolve, reject) => {
 			const installer = spawn('msiexec.exe', ['/i', installerPath, '/passive', '/norestart'], { windowsHide: false });
@@ -183,6 +197,14 @@ export class FastFlowLMClient {
 		return models;
 	}
 
+	public async resolveModel(preferred: string): Promise<string> {
+		const models = await this.listModels();
+		if (!models.length || models.includes(preferred)) {return preferred;}
+		const fallback = models[0];
+		this.reportStatus(`Configured model "${preferred}" is unavailable; using "${fallback}".`);
+		return fallback;
+	}
+
 	public async chat(messages: ChatMessage[], model: string): Promise<string> {
 		this.reportStatus(`Sending task to model "${model}".`);
 		const response = await this.request(`${this.baseUrl}/chat/completions`, {
@@ -211,6 +233,11 @@ export class FastFlowLMClient {
 		this.reportStatus(`Loading or selecting model "${model}" and sending the task.`);
 		const controller = new AbortController();
 		const cancellation = token.onCancellationRequested(() => controller.abort());
+		let timedOut = false;
+		const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, STREAM_TIMEOUT_MS);
+		const emitRaw = (data: string) => {
+			if (this.settings.get<boolean>('debugStreaming', false)) {onRaw(data);}
+		};
 		try {
 			const response = await this.request(`${this.baseUrl}/chat/completions`, {
 				method: 'POST',
@@ -226,72 +253,74 @@ export class FastFlowLMClient {
 			});
 			if (!response.ok) {throw new Error(`Chat request failed (${response.status}): ${(await response.text()).slice(0, 240)}`);}
 			if (!response.body) {throw new Error('FastFlowLM returned an empty response stream.');}
-			onRaw(`[response] ${response.status} ${response.statusText} content-type=${response.headers.get('content-type') ?? 'unknown'}`);
+			emitRaw(`[response] ${response.status} ${response.statusText} content-type=${response.headers.get('content-type') ?? 'unknown'}`);
 
 			const reader = response.body.getReader();
 			const decoder = new TextDecoder();
 			let buffer = '';
 			let completed = false;
+			let receivedDone = false;
 			let responseStarted = false;
 			const toolCalls = new Map<number, ToolCall>();
 			while (!completed) {
 				const { done, value } = await reader.read();
 				const chunk = decoder.decode(value, { stream: !done });
-				onRaw(chunk);
+				emitRaw(chunk);
 				buffer += chunk;
 				const events = buffer.split(/\r?\n\r?\n/);
 				buffer = events.pop() ?? '';
 				for (const event of events) {
 					const eventName = event.split(/\r?\n/).find(line => line.startsWith('event:'))?.slice(6).trim();
-					for (const line of event.split(/\r?\n/)) {
-						if (line.startsWith(':')) {
-							const comment = line.slice(1).trim();
-							if (comment) { onActivity(comment); }
-							continue;
-						}
-						if (!line.startsWith('data:')) {continue;}
-						const data = line.slice(5).trim();
-						if (data === '[DONE]') {completed = true; break;}
-						let payload: Record<string, unknown>;
-						try { payload = JSON.parse(data) as Record<string, unknown>; } catch {
-							onActivity(data);
-							continue;
-						}
-						const serverActivity = activityText(payload);
-						if (serverActivity) { onActivity(serverActivity); }
-						if (!serverActivity && eventName && !['message', 'data'].includes(eventName)) { onActivity(`Server event: ${eventName}`); }
-						const delta = (payload as {
-							choices?: Array<{ delta?: { content?: string; reasoning?: string; reasoning_content?: string; thinking?: string; thinking_content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } }>
-						}).choices?.[0]?.delta;
-						const reasoning = delta?.reasoning ?? delta?.reasoning_content ?? delta?.thinking ?? delta?.thinking_content;
-						if (reasoning) {
-							onActivity(reasoning);
-							onRaw(`[model reasoning] ${reasoning}`);
-						}
-						const modelThinking = reasoning ? undefined : modelThinkingText(payload);
-						if (modelThinking) { onRaw(`[model thinking] ${modelThinking}`); }
-						const content = delta?.content;
-						if (content) {
-							if (!responseStarted) { this.reportStatus(`Model "${model}" is responding.`); responseStarted = true; }
-							onText(content);
-						}
-						for (const item of delta?.tool_calls ?? []) {
-							const index = item.index ?? 0;
-							const existing = toolCalls.get(index) ?? { id: item.id ?? `fastflowlm-tool-${index}`, type: 'function' as const, function: { name: '', arguments: '' } };
-							existing.function.name += item.function?.name ?? '';
-							existing.function.arguments += item.function?.arguments ?? '';
-							toolCalls.set(index, existing);
-						}
+					const comments = event.split(/\r?\n/).filter(line => line.startsWith(':')).map(line => line.slice(1).trim()).filter(Boolean);
+					for (const comment of comments) { onActivity(comment); }
+					const dataLines = event.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim());
+					if (!dataLines.length) {continue;}
+					const data = dataLines.join('\n').trim();
+					if (data === '[DONE]') {completed = true; receivedDone = true; break;}
+					let payload: Record<string, unknown>;
+					try { payload = JSON.parse(data) as Record<string, unknown>; } catch {
+						onActivity(data);
+						continue;
+					}
+					const serverActivity = activityText(payload);
+					if (serverActivity) { onActivity(serverActivity); }
+					if (!serverActivity && eventName && !['message', 'data'].includes(eventName)) { onActivity(`Server event: ${eventName}`); }
+					const delta = (payload as {
+						choices?: Array<{ delta?: { content?: string; reasoning?: string; reasoning_content?: string; thinking?: string; thinking_content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } }>
+					}).choices?.[0]?.delta;
+					const reasoning = delta?.reasoning ?? delta?.reasoning_content ?? delta?.thinking ?? delta?.thinking_content;
+					if (reasoning) {
+						onActivity(reasoning);
+						emitRaw(`[model reasoning] ${reasoning}`);
+					}
+					const modelThinking = reasoning ? undefined : modelThinkingText(payload);
+					if (modelThinking) { emitRaw(`[model thinking] ${modelThinking}`); }
+					const content = delta?.content;
+					if (content) {
+						if (!responseStarted) { this.reportStatus(`Model "${model}" is responding.`); responseStarted = true; }
+						onText(content);
+					}
+					for (const item of delta?.tool_calls ?? []) {
+						const index = item.index ?? 0;
+						const existing = toolCalls.get(index) ?? { id: item.id ?? `fastflowlm-tool-${index}`, type: 'function' as const, function: { name: '', arguments: '' } };
+						existing.function.name += item.function?.name ?? '';
+						existing.function.arguments += item.function?.arguments ?? '';
+						toolCalls.set(index, existing);
 					}
 				}
 				if (done) {completed = true;}
 			}
-			if (buffer.trim()) { onRaw(`[trailing stream data] ${buffer}`); }
+			if (buffer.trim()) { emitRaw(`[trailing stream data] ${buffer}`); }
+			if (!receivedDone) {throw new Error('FastFlowLM closed the response stream before [DONE].');}
 			for (const call of toolCalls.values()) {
 				onToolCall({ ...call, function: { ...call.function, arguments: call.function.arguments || '{}' } });
 			}
 			this.reportStatus(`Model "${model}" completed the task.`);
+		} catch (error) {
+			if (timedOut) {throw new Error(`FastFlowLM response timed out after ${STREAM_TIMEOUT_MS / 1000} seconds.`);}
+			throw error;
 		} finally {
+			clearTimeout(timeout);
 			cancellation.dispose();
 		}
 	}
@@ -410,6 +439,12 @@ class ServerManager {
 			this.process = undefined;
 			this.processId = undefined;
 		});
+		await new Promise<void>((resolve, reject) => {
+			const onSpawn = () => { child.removeListener('error', onError); resolve(); };
+			const onError = (error: Error) => { child.removeListener('spawn', onSpawn); reject(error); };
+			child.once('spawn', onSpawn);
+			child.once('error', onError);
+		});
 	}
 
 	public async ensureRunning(): Promise<void> {
@@ -427,6 +462,8 @@ class ServerManager {
 		const deadline = Date.now() + 30_000;
 		let lastError = this.error;
 		while (Date.now() < deadline) {
+			if (this.state === 'error') {throw new Error(this.error || 'FastFlowLM server failed to start.');}
+			if (this.state === 'stopped') {throw new Error('FastFlowLM server stopped before it became ready.');}
 			try {
 				const response = await fetch(`${baseUrl}/models`, apiKey ? { headers: { Authorization: `Bearer ${apiKey}` } } : undefined);
 				if (response.ok) {
@@ -469,15 +506,16 @@ class ChatPanel {
 	private panel: vscode.WebviewPanel | undefined;
 	private messages: ChatMessage[] = [];
 	private model = vscode.workspace.getConfiguration('flm-vscode').get<string>('model', 'fastflowlm');
+	private cancellation: vscode.CancellationTokenSource | undefined;
 
 	public constructor(private readonly client: FastFlowLMClient, private readonly server: ServerManager, private readonly reportStatus: StatusReporter) {}
 
 	public show(): void {
 		if (this.panel) { this.panel.reveal(vscode.ViewColumn.Beside); return; }
 		this.panel = vscode.window.createWebviewPanel('flm-vscode.chat', 'FastFlowLM', vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
-		this.panel.webview.html = this.html(this.panel.webview);
+		this.panel.webview.html = this.html();
 		this.panel.webview.onDidReceiveMessage(message => this.handleMessage(message));
-		this.panel.onDidDispose(() => this.panel = undefined);
+		this.panel.onDidDispose(() => { this.cancel(); this.panel = undefined; });
 	}
 
 	private async handleMessage(message: { type: string; text?: string; model?: string }): Promise<void> {
@@ -495,22 +533,30 @@ class ChatPanel {
 
 	private async send(text: string): Promise<void> {
 		const content = text.trim(); if (!content) {return;}
+		if (this.cancellation) {return;}
+		this.model = await this.client.resolveModel(this.model);
 		this.messages.push({ role: 'user', content }); this.post({ type: 'user', content }); this.post({ type: 'busy', busy: true });
 		this.reportStatus(`Working on your task with model "${this.model}".`);
 			this.post({ type: 'activity', content: `Waiting for FastFlowLM to load model "${this.model}"...` });
+		const cancellation = new vscode.CancellationTokenSource();
+		this.cancellation = cancellation;
 		try {
 			let reply = '';
-			const cancellation = new vscode.CancellationTokenSource();
 			await this.client.streamChat(this.messages, this.model, [], vscode.LanguageModelChatToolMode.Auto, cancellation.token,
 				textPart => { reply += textPart; this.post({ type: 'assistantDelta', content: textPart }); },
 				() => {},
 				activity => this.post({ type: 'activity', content: activity }),
 				raw => this.post({ type: 'raw', content: raw })
 			);
-			cancellation.dispose();
 			this.messages.push({ role: 'assistant', content: reply });
-		} finally { this.post({ type: 'busy', busy: false }); }
+		} finally {
+			cancellation.dispose();
+			if (this.cancellation === cancellation) {this.cancellation = undefined;}
+			this.post({ type: 'busy', busy: false });
+		}
 	}
+
+	private cancel(): void { this.cancellation?.cancel(); }
 
 	private post(message: unknown): void { void this.panel?.webview.postMessage(message); }
 
@@ -518,7 +564,7 @@ class ChatPanel {
 
 	public raw(message: string): void { this.post({ type: 'raw', content: message }); }
 
-	private html(webview: vscode.Webview): string {
+	private html(): string {
 		const nonce = randomBytes(16).toString('hex');
 		const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
 		return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>FastFlowLM</title>
@@ -528,6 +574,19 @@ class ChatPanel {
 	}
 
 	private escape(value: string): string { return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] ?? character)); }
+}
+
+function participantHistory(history: readonly (vscode.ChatRequestTurn | vscode.ChatResponseTurn)[]): ChatMessage[] {
+	const messages: ChatMessage[] = [];
+	for (const turn of history) {
+		if (turn instanceof vscode.ChatRequestTurn) {
+			if (turn.prompt.trim()) {messages.push({ role: 'user', content: turn.prompt });}
+			continue;
+		}
+		const content = turn.response.filter(part => part instanceof vscode.ChatResponseMarkdownPart).map(part => part.value.value).join('');
+		if (content.trim()) {messages.push({ role: 'assistant', content });}
+	}
+	return messages;
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -548,7 +607,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const client = new FastFlowLMClient(reportStatus, () => server.ensureRunning());
 	const chat = new ChatPanel(client, server, reportStatus);
 	chatPanel = chat;
-	const flmParticipant = vscode.chat.createChatParticipant('flm-vscode.flm', async (request, _context, response, token) => {
+	const flmParticipant = vscode.chat.createChatParticipant('flm-vscode.flm', async (request, context, response, token) => {
 		try {
 			switch (request.command) {
 				case 'status': {
@@ -562,8 +621,11 @@ export function activate(context: vscode.ExtensionContext) {
 				case 'restart': await server.restart(); response.markdown('FastFlowLM server restarted.'); return;
 				case 'update': await checkFlmInstallation(reportStatus); response.markdown('FastFlowLM update check completed.'); return;
 			}
-			const model = vscode.workspace.getConfiguration('flm-vscode').get<string>('model', 'fastflowlm');
-			await client.streamChat([{ role: 'user', content: request.prompt }], model, [], vscode.LanguageModelChatToolMode.Auto, token, text => response.markdown(text), () => {});
+			const configuredModel = vscode.workspace.getConfiguration('flm-vscode').get<string>('model', 'fastflowlm');
+			const model = await client.resolveModel(configuredModel);
+			const messages = participantHistory(context.history);
+			messages.push({ role: 'user', content: request.prompt });
+			await client.streamChat(messages, model, [], vscode.LanguageModelChatToolMode.Auto, token, text => response.markdown(text), () => {});
 		} catch (error) { response.markdown(`FastFlowLM error: ${error instanceof Error ? error.message : String(error)}`); }
 	});
 	flmParticipant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'flm-vscode.png');
