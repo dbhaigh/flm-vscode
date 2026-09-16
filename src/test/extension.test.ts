@@ -22,7 +22,8 @@ suite('Extension Test Suite', () => {
 			'flm-vscode.checkServer',
 			'flm-vscode.startServer',
 			'flm-vscode.stopServer',
-			'flm-vscode.restartServer'
+			'flm-vscode.restartServer',
+			'flm-vscode.showActivityLog'
 		]);
 		assert.deepStrictEqual(manifest.contributes?.languageModelChatProviders?.map(provider => provider.vendor), ['fastflowlm']);
 	});
@@ -39,6 +40,7 @@ suite('Extension Test Suite', () => {
 
 	test('lists models and sends chat requests to an OpenAI-compatible server', async () => {
 		let receivedBody: Record<string, unknown> | undefined;
+		const statuses: string[] = [];
 		const server = createServer((request, response) => {
 			if (request.url === '/v1/models') {
 				response.setHeader('Content-Type', 'application/json');
@@ -65,11 +67,17 @@ suite('Extension Test Suite', () => {
 		const originalUrl = configuration.get<string>('serverUrl');
 		await configuration.update('serverUrl', `http://127.0.0.1:${address.port}/v1`, vscode.ConfigurationTarget.Global);
 		try {
-			const client = new FastFlowLMClient();
+			const client = new FastFlowLMClient(status => statuses.push(status));
 			assert.deepStrictEqual(await client.listModels(), ['test-model']);
 			assert.strictEqual(await client.chat([{ role: 'user', content: 'hello' }], 'test-model'), 'test reply');
 			assert.strictEqual(receivedBody?.model, 'test-model');
 			assert.strictEqual(receivedBody?.stream, false);
+			assert.deepStrictEqual(statuses, [
+				`Checking available models at http://127.0.0.1:${address.port}/v1/models.`,
+				'Available models: test-model.',
+				'Sending task to model "test-model".',
+				'Model "test-model" completed the task.'
+			]);
 		} finally {
 			await configuration.update('serverUrl', originalUrl, vscode.ConfigurationTarget.Global);
 			await close(server);

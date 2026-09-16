@@ -2,7 +2,7 @@
   "name": "flm-vscode",
   "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.0.101",
+  "version": "0.0.102",
   "publisher": "AndrewHaigh",
   "author": {
     "name": "Andrew Haigh"
@@ -55,6 +55,10 @@
       {
         "command": "flm-vscode.restartServer",
         "title": "FastFlowLM: Restart Server"
+      },
+      {
+        "command": "flm-vscode.showActivityLog",
+        "title": "FastFlowLM: Show Activity Log"
       }
     ],
     "menus": {
@@ -63,7 +67,8 @@
         { "command": "flm-vscode.checkServer" },
         { "command": "flm-vscode.startServer" },
         { "command": "flm-vscode.stopServer" },
-        { "command": "flm-vscode.restartServer" }
+        { "command": "flm-vscode.restartServer" },
+        { "command": "flm-vscode.showActivityLog" }
       ]
     },
     "languageModelChatProviders": [

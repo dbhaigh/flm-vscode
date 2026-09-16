@@ -11,6 +11,7 @@ type ChatMessage = {
 };
 type OpenAITool = { type: 'function'; function: { name: string; description: string; parameters: object } };
 type ServerState = 'stopped' | 'starting' | 'running' | 'error';
+type StatusReporter = (message: string) => void;
 const MAX_INPUT_TOKENS = 24576;
 const MAX_OUTPUT_TOKENS = 4096;
 const CHARS_PER_TOKEN = 4;
@@ -33,6 +34,7 @@ export function limitMessages(messages: ChatMessage[]): ChatMessage[] {
 }
 
 export class FastFlowLMClient {
+	public constructor(private readonly reportStatus: StatusReporter = () => {}) {}
 	private get settings() { return vscode.workspace.getConfiguration('flm-vscode'); }
 	private get baseUrl() { return this.settings.get<string>('serverUrl', 'http://127.0.0.1:8000/v1').replace(/\/$/, ''); }
 	private async request(url: string, init?: RequestInit): Promise<Response> {
@@ -49,13 +51,17 @@ export class FastFlowLMClient {
 	}
 
 	public async listModels(): Promise<string[]> {
+		this.reportStatus(`Checking available models at ${this.baseUrl}/models.`);
 		const response = await this.request(`${this.baseUrl}/models`, { headers: this.headers() });
 		if (!response.ok) {throw new Error(`Model request failed (${response.status}).`);}
 		const payload = await response.json() as { data?: Array<{ id?: string }> };
-		return (payload.data ?? []).map(model => model.id).filter((id): id is string => Boolean(id));
+		const models = (payload.data ?? []).map(model => model.id).filter((id): id is string => Boolean(id));
+		this.reportStatus(models.length ? `Available models: ${models.join(', ')}.` : 'The server reported no available models.');
+		return models;
 	}
 
 	public async chat(messages: ChatMessage[], model: string): Promise<string> {
+		this.reportStatus(`Sending task to model "${model}".`);
 		const response = await this.request(`${this.baseUrl}/chat/completions`, {
 			method: 'POST', headers: this.headers(), body: JSON.stringify({ model, messages, stream: false, max_tokens: MAX_OUTPUT_TOKENS })
 		});
@@ -63,6 +69,7 @@ export class FastFlowLMClient {
 		const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
 		const content = payload.choices?.[0]?.message?.content;
 		if (!content) {throw new Error('FastFlowLM returned no assistant content.');}
+		this.reportStatus(`Model "${model}" completed the task.`);
 		return content;
 	}
 
@@ -76,6 +83,7 @@ export class FastFlowLMClient {
 		onToolCall: (call: ToolCall) => void
 	): Promise<void> {
 		messages = limitMessages(messages);
+		this.reportStatus(`Loading or selecting model "${model}" and sending the task.`);
 		const controller = new AbortController();
 		const cancellation = token.onCancellationRequested(() => controller.abort());
 		try {
@@ -98,6 +106,7 @@ export class FastFlowLMClient {
 			const decoder = new TextDecoder();
 			let buffer = '';
 			let completed = false;
+			let responseStarted = false;
 			const toolCalls = new Map<number, ToolCall>();
 			while (!completed) {
 				const { done, value } = await reader.read();
@@ -113,7 +122,10 @@ export class FastFlowLMClient {
 							choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } }>
 						}).choices?.[0]?.delta;
 						const content = delta?.content;
-						if (content) {onText(content);}
+						if (content) {
+							if (!responseStarted) { this.reportStatus(`Model "${model}" is responding.`); responseStarted = true; }
+							onText(content);
+						}
 						for (const item of delta?.tool_calls ?? []) {
 							const index = item.index ?? 0;
 							const existing = toolCalls.get(index) ?? { id: item.id ?? `fastflowlm-tool-${index}`, type: 'function' as const, function: { name: '', arguments: '' } };
@@ -128,6 +140,7 @@ export class FastFlowLMClient {
 			for (const call of toolCalls.values()) {
 				onToolCall({ ...call, function: { ...call.function, arguments: call.function.arguments || '{}' } });
 			}
+			this.reportStatus(`Model "${model}" completed the task.`);
 		} finally {
 			cancellation.dispose();
 		}
@@ -211,6 +224,8 @@ class ServerManager {
 	private state: ServerState = 'stopped';
 	private error = '';
 
+	public constructor(private readonly reportStatus: StatusReporter = () => {}) {}
+
 	public snapshot() { return { state: this.state, error: this.error, pid: this.process?.pid }; }
 
 	public async start(): Promise<void> {
@@ -222,13 +237,17 @@ class ServerManager {
 		const configuredCwd = settings.get<string>('serverCwd', '').trim();
 		const cwd = configuredCwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 		this.state = 'starting'; this.error = '';
+		this.reportStatus(`Starting FastFlowLM server: ${command} ${args.join(' ')}`);
 		this.process = spawn(command, args, { cwd, shell: true, windowsHide: true });
-		this.process.on('error', error => { this.state = 'error'; this.error = error.message; this.process = undefined; });
-		this.process.on('spawn', () => this.state = 'running');
+		this.process.stdout?.on('data', data => this.reportStatus(`[server] ${String(data).trimEnd()}`));
+		this.process.stderr?.on('data', data => this.reportStatus(`[server] ${String(data).trimEnd()}`));
+		this.process.on('error', error => { this.state = 'error'; this.error = error.message; this.reportStatus(`FastFlowLM server failed to start: ${error.message}`); this.process = undefined; });
+		this.process.on('spawn', () => { this.state = 'running'; this.reportStatus('FastFlowLM server process started.'); });
 		this.process.on('exit', (code, signal) => {
 			if (this.state !== 'error') {
 				this.state = 'stopped';
 				this.error = code === 0 || signal === 'SIGTERM' ? '' : `Server exited with code ${code ?? signal}.`;
+				this.reportStatus(this.error || 'FastFlowLM server stopped.');
 			}
 			this.process = undefined;
 		});
@@ -236,6 +255,7 @@ class ServerManager {
 
 	public stop(): void {
 		if (!this.process) {return;}
+		this.reportStatus('Stopping FastFlowLM server.');
 		this.process.kill(); this.process = undefined; this.state = 'stopped'; this.error = '';
 	}
 
@@ -248,7 +268,7 @@ class ChatPanel {
 	private messages: ChatMessage[] = [];
 	private model = vscode.workspace.getConfiguration('flm-vscode').get<string>('model', 'fastflowlm');
 
-	public constructor(private readonly client: FastFlowLMClient, private readonly server: ServerManager) {}
+	public constructor(private readonly client: FastFlowLMClient, private readonly server: ServerManager, private readonly reportStatus: StatusReporter) {}
 
 	public show(): void {
 		if (this.panel) { this.panel.reveal(vscode.ViewColumn.Beside); return; }
@@ -273,6 +293,7 @@ class ChatPanel {
 
 	private async send(text: string): Promise<void> {
 		const content = text.trim(); if (!content) {return;}
+		this.reportStatus(`Working on your task with model "${this.model}".`);
 		this.messages.push({ role: 'user', content }); this.post({ type: 'user', content }); this.post({ type: 'busy', busy: true });
 		try {
 			const reply = await this.client.chat(this.messages, this.model);
@@ -295,9 +316,11 @@ class ChatPanel {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-	const client = new FastFlowLMClient();
-	const server = new ServerManager();
-	const chat = new ChatPanel(client, server);
+	const output = vscode.window.createOutputChannel('FastFlowLM');
+	const reportStatus: StatusReporter = message => { output.appendLine(`[${new Date().toLocaleTimeString()}] ${message}`); };
+	const client = new FastFlowLMClient(reportStatus);
+	const server = new ServerManager(reportStatus);
+	const chat = new ChatPanel(client, server, reportStatus);
 	context.subscriptions.push(
 		vscode.lm.registerLanguageModelChatProvider('fastflowlm', new FastFlowLMProvider(client)),
 		vscode.commands.registerCommand('flm-vscode.openChat', () => chat.show()),
@@ -314,7 +337,8 @@ export function activate(context: vscode.ExtensionContext) {
 			try { await server.restart(); void vscode.window.showInformationMessage('FastFlowLM server restarted.'); }
 			catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)); }
 		}),
-		{ dispose: () => server.dispose() }
+		vscode.commands.registerCommand('flm-vscode.showActivityLog', () => output.show()),
+		{ dispose: () => { server.dispose(); output.dispose(); } }
 	);
 }
 
