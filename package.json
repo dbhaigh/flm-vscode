@@ -2,7 +2,7 @@
   "name": "flm-vscode",
   "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.0.102",
+  "version": "0.1.0",
   "publisher": "AndrewHaigh",
   "author": {
     "name": "Andrew Haigh"
@@ -31,7 +31,8 @@
     "AI"
   ],
   "activationEvents": [
-    "onLanguageModelChatProvider:fastflowlm"
+    "onLanguageModelChatProvider:fastflowlm",
+    "onChatParticipant:flm-vscode.flm"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -43,6 +44,10 @@
       {
         "command": "flm-vscode.checkServer",
         "title": "FastFlowLM: Check Server"
+      },
+      {
+        "command": "flm-vscode.checkFlmInstallation",
+        "title": "FastFlowLM: Check FLM Installation"
       },
       {
         "command": "flm-vscode.startServer",
@@ -65,6 +70,7 @@
       "commandPalette": [
         { "command": "flm-vscode.openChat" },
         { "command": "flm-vscode.checkServer" },
+        { "command": "flm-vscode.checkFlmInstallation" },
         { "command": "flm-vscode.startServer" },
         { "command": "flm-vscode.stopServer" },
         { "command": "flm-vscode.restartServer" },
@@ -85,6 +91,21 @@
             }
           }
         }
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "flm-vscode.flm",
+        "name": "flm",
+        "description": "Interact directly with a FastFlowLM server.",
+        "commands": [
+          { "name": "status", "description": "Show the FastFlowLM server status." },
+          { "name": "models", "description": "List models available from the server." },
+          { "name": "start", "description": "Start the configured local server." },
+          { "name": "stop", "description": "Stop the managed local server." },
+          { "name": "restart", "description": "Restart the managed local server." },
+          { "name": "update", "description": "Check for and install a newer FLM release." }
+        ]
       }
     ],
     "configuration": {
@@ -122,6 +143,11 @@
           "type": "string",
           "default": "",
           "description": "Working directory for the configured FastFlowLM server command. Defaults to the first workspace folder."
+        },
+        "flm-vscode.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check for the FLM executable and newer FastFlowLM releases when the extension activates."
         }
       }
     }

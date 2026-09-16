@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import { createServer, Server } from 'node:http';
 
 import * as vscode from 'vscode';
-import { FastFlowLMClient, limitMessages } from '../extension';
+import { compareFlmVersions, FastFlowLMClient, limitMessages, parseFlmVersion } from '../extension';
 
 suite('Extension Test Suite', () => {
 	test('activates and registers the extension commands', async () => {
@@ -11,6 +11,7 @@ suite('Extension Test Suite', () => {
 		await extension.activate();
 		const commands = await vscode.commands.getCommands(true);
 		assert.ok(commands.includes('flm-vscode.openChat'));
+		assert.ok(commands.includes('flm-vscode.checkFlmInstallation'));
 	});
 
 	test('publishes the expected extension contributions', () => {
@@ -20,6 +21,7 @@ suite('Extension Test Suite', () => {
 		assert.deepStrictEqual(manifest.contributes?.commands?.map(command => command.command), [
 			'flm-vscode.openChat',
 			'flm-vscode.checkServer',
+			'flm-vscode.checkFlmInstallation',
 			'flm-vscode.startServer',
 			'flm-vscode.stopServer',
 			'flm-vscode.restartServer',
@@ -36,6 +38,14 @@ suite('Extension Test Suite', () => {
 		const limited = limitMessages(messages);
 		assert.strictEqual(limited.at(-1)?.content, 'latest');
 		assert.ok(limited.reduce((total, message) => total + (message.content?.length ?? 0), 0) <= 24576 * 4);
+	});
+
+	test('parses and compares FLM versions', () => {
+		assert.strictEqual(parseFlmVersion('{ "version": "1.0.4" }'), '1.0.4');
+		assert.strictEqual(parseFlmVersion('FLM v1.0.4'), '1.0.4');
+		assert.strictEqual(compareFlmVersions('v1.0.5', '1.0.4'), 1);
+		assert.strictEqual(compareFlmVersions('1.0.4', '1.0.5'), -1);
+		assert.strictEqual(compareFlmVersions('1.0.5', '1.0.5'), 0);
 	});
 
 	test('lists models and sends chat requests to an OpenAI-compatible server', async () => {
@@ -78,6 +88,45 @@ suite('Extension Test Suite', () => {
 				'Sending task to model "test-model".',
 				'Model "test-model" completed the task.'
 			]);
+		} finally {
+			await configuration.update('serverUrl', originalUrl, vscode.ConfigurationTarget.Global);
+			await close(server);
+		}
+	});
+
+	test('reports model download and load activity from streaming events', async () => {
+		const activity: string[] = [];
+		const raw: string[] = [];
+		const server = createServer((_request, response) => {
+			response.setHeader('Content-Type', 'text/event-stream');
+			response.write(': loading model from registry\n\n');
+			response.write('event: model\ndata: {"status":"Downloading model","progress":0.5}\n\n');
+			response.write('data: model loaded from local cache\n\n');
+			response.write('data: {"raw_output":"model weights loaded"}\n\n');
+			response.write('data: {"choices":[{"delta":{"reasoning":"checking the prompt"}}]}\n\n');
+			response.write('data: {"choices":[{"delta":{"content":"reply"}}]}\n\n');
+			response.end('data: [DONE]\n\n');
+		});
+		await listen(server);
+		const address = server.address();
+		assert.ok(address && typeof address !== 'string');
+		const configuration = vscode.workspace.getConfiguration('flm-vscode');
+		const originalUrl = configuration.get<string>('serverUrl');
+		await configuration.update('serverUrl', `http://127.0.0.1:${address.port}/v1`, vscode.ConfigurationTarget.Global);
+		try {
+			const client = new FastFlowLMClient();
+			let response = '';
+			const cancellation = new vscode.CancellationTokenSource();
+			await client.streamChat(
+				[{ role: 'user', content: 'hello' }], 'test-model', [], vscode.LanguageModelChatToolMode.Auto, cancellation.token,
+				text => response += text, () => {}, message => activity.push(message), chunk => raw.push(chunk)
+			);
+			cancellation.dispose();
+			assert.strictEqual(response, 'reply');
+			assert.deepStrictEqual(activity, ['loading model from registry', 'Downloading model', 'model loaded from local cache', 'model weights loaded']);
+			assert.ok(raw.some(chunk => chunk.includes('Downloading model')));
+			assert.ok(raw.some(chunk => chunk.includes('[model reasoning] checking the prompt')));
+			assert.ok(raw.some(chunk => chunk.includes('content-type=text/event-stream')));
 		} finally {
 			await configuration.update('serverUrl', originalUrl, vscode.ConfigurationTarget.Global);
 			await close(server);
