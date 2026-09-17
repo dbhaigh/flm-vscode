@@ -40,7 +40,9 @@ const MAX_AGENT_ACTIVITY = 100;
 const MAX_PERSISTENT_MEMORY_BYTES = 512 * 1024;
 const FLM_INSTALLER_URL = 'https://github.com/ROCm/FastFlowLM/releases/latest/download/flm-setup.msi';
 const FLM_LATEST_RELEASE_API = 'https://api.github.com/repos/ROCm/FastFlowLM/releases/latest';
+const SELECTED_AGENT_STORAGE_KEY = 'flm-vscode.selectedAgent';
 const externalAgentSessionChecks = new Map<string, Promise<void>>();
+let selectedAgentState: vscode.Memento | undefined;
 const workspaceFileTools: OpenAITool[] = [
 	{
 		type: 'function',
@@ -889,8 +891,19 @@ function ensureExternalAgentInstalled(agent: ExternalAgent): Promise<void> {
 	return check;
 }
 
+function normalizeSelectedAgent(value: string | undefined): string {
+	const normalized = (value ?? 'none').trim().toLowerCase();
+	return normalized === 'fastflowlm' ? 'none' : normalized;
+}
+
+export function readSelectedAgentPreference(configuration: vscode.WorkspaceConfiguration, state: vscode.Memento | undefined): string {
+	const fromState = state?.get<string>(SELECTED_AGENT_STORAGE_KEY);
+	const fromConfig = configuration.get<string>('selectedAgent', 'none');
+	return normalizeSelectedAgent(fromState ?? fromConfig ?? 'none');
+}
+
 function selectedExternalAgent(): ExternalAgent | undefined {
-	const selected = vscode.workspace.getConfiguration('flm-vscode').get<string>('selectedAgent', 'none').trim().toLowerCase();
+	const selected = readSelectedAgentPreference(vscode.workspace.getConfiguration('flm-vscode'), selectedAgentState);
 	if (!selected || selected === 'none' || selected === 'fastflowlm') {return undefined;}
 	return configuredExternalAgents().find(agent => agent.name === selected);
 }
@@ -1073,6 +1086,13 @@ async function delegateToChatModel(
 	return true;
 }
 
+export async function updateSelectedAgent(value: string, state: vscode.Memento | undefined = selectedAgentState): Promise<boolean> {
+	const normalized = normalizeSelectedAgent(value);
+	if (!state) {return false;}
+	await state.update(SELECTED_AGENT_STORAGE_KEY, normalized === 'none' ? undefined : normalized);
+	return true;
+}
+
 async function selectAgent(): Promise<void> {
 	const agents = configuredExternalAgents();
 	const items = [
@@ -1084,7 +1104,10 @@ async function selectAgent(): Promise<void> {
 		canPickMany: false
 	});
 	if (!choice) {return;}
-	await vscode.workspace.getConfiguration('flm-vscode').update('selectedAgent', choice.value, vscode.ConfigurationTarget.Global);
+	const updated = await updateSelectedAgent(choice.value, selectedAgentState);
+	if (!updated) {
+		void vscode.window.showWarningMessage('The selected agent preference could not be saved to user settings in this VS Code session, but the command still completed.');
+	}
 	if (choice.value === 'none') {
 		void vscode.window.showInformationMessage('FastFlowLM is now the default @flm harness.');
 		return;
@@ -1097,6 +1120,7 @@ async function selectAgent(): Promise<void> {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+	selectedAgentState = context.globalState;
 	const output = vscode.window.createOutputChannel('FastFlowLM');
 	let chatPanel: ChatPanel | undefined;
 	const reportStatus: StatusReporter = message => {

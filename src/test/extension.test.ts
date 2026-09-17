@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import { createServer, Server } from 'node:http';
 
 import * as vscode from 'vscode';
-import { compareFlmVersions, FastFlowLMClient, limitMessages, parseFlmVersion, requestedChatModels } from '../extension';
+import { compareFlmVersions, FastFlowLMClient, limitMessages, parseFlmVersion, readSelectedAgentPreference, requestedChatModels, updateSelectedAgent } from '../extension';
 
 suite('Extension Test Suite', () => {
 	test('activates and registers the extension commands', async () => {
@@ -66,6 +66,24 @@ suite('Extension Test Suite', () => {
 	test('recognizes external harness mentions', () => {
 		assert.deepStrictEqual(requestedChatModels('@flm ask @Claude Code and @deepseek to review this'), ['claude', 'deepseek']);
 		assert.deepStrictEqual(requestedChatModels('@claude ask @flm and @hermes to review this', true), ['claude', 'flm', 'hermes']);
+	});
+
+	test('prioritizes persisted state over stale configuration values', () => {
+		const config = {
+			get: () => 'deepseek'
+		} as unknown as vscode.WorkspaceConfiguration;
+		const state = {
+			get: (key: string) => key === 'flm-vscode.selectedAgent' ? 'claude' : undefined
+		} as vscode.Memento;
+		assert.strictEqual(readSelectedAgentPreference(config, state), 'claude');
+	});
+
+	test('handles an unregistered selectedAgent configuration gracefully', async () => {
+		const state = {
+			update: async () => undefined,
+			get: () => undefined
+		} as unknown as vscode.Memento;
+		assert.strictEqual(await updateSelectedAgent('none', state), true);
 	});
 
 	test('lists models and sends chat requests to an OpenAI-compatible server', async () => {

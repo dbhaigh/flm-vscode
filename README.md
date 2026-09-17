@@ -44,7 +44,7 @@ Open **Settings** and search for **FastFlowLM**:
 - `flm-vscode.checkForUpdates`: Check FLM availability and releases when the extension activates. Defaults to `true`.
 - `flm-vscode.debugStreaming`: Include raw streaming responses and model reasoning in activity output. Defaults to `false`.
 - `flm-vscode.allowWorkspaceWrites`: Allow `@flm` to request workspace file writes. Defaults to `true`; every write still requires a VS Code confirmation dialog.
-- `flm-vscode.selectedAgent`: Default harness for ordinary `@flm` prompts. Set to `none` for FastFlowLM, or use **FastFlowLM: Select Harness or Agent** to choose a configured external agent.
+- `flm-vscode.selectedAgent`: Legacy configuration fallback for the default harness. The **FastFlowLM: Select Harness or Agent** command stores its choice in extension state, so it remains reliable across extension reloads even when settings registration is stale. Set to `none` for FastFlowLM, or choose a configured external agent.
 
 When the configured model is unavailable, the extension selects the first model reported by the server. The `@flm` participant also includes earlier prompts and responses from the current participant conversation.
 

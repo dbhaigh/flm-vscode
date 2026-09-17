@@ -4,6 +4,11 @@ All notable changes to the "flm-vscode" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.1.5] - 2026-09-17
+
+- Persisted the selected external harness in extension state so harness selection remains reliable across extension reloads, even when the setting is not registered.
+- Added regression coverage for persisted harness preference precedence and graceful handling of an unavailable configuration setting.
+
 ## [0.1.4] - 2026-09-17
 
 - Added guarded workspace file tools for listing, reading, and writing project files from `@flm`.

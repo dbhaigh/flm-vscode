@@ -2,7 +2,7 @@
   "name": "flm-vscode",
   "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "AndrewHaigh",
   "author": {
     "name": "Andrew Haigh"
