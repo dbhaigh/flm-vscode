@@ -4,7 +4,20 @@ All notable changes to the "flm-vscode" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.1.3] - 2026-09-16
+
+- Made MCP requests process sequentially so persistent memory writes and reads remain ordered.
+- Added atomic project-memory updates with per-entry and total-size limits.
+- Added explicit MCP memory versioning and improved external harness documentation.
+
+## [0.1.2] - 2026-09-16
+
+- Prepared the external harness MCP bridge for publishing as a VSIX.
+- Added persistent project memory tools for external harness sessions.
+
 ## [0.1.1] - 2026-09-16
+
+- Added a standalone stdio MCP bridge for external coding harnesses, with FastFlowLM chat/model tools and guarded project file tools.
 
 - Improved managed server startup by waiting for the child process to spawn and reporting startup failures immediately.
 - Improved readiness checks so a server that exits before becoming available fails promptly instead of waiting for the full timeout.

@@ -2,7 +2,7 @@
   "name": "flm-vscode",
   "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "publisher": "AndrewHaigh",
   "author": {
     "name": "Andrew Haigh"
@@ -35,6 +35,9 @@
     "onChatParticipant:flm-vscode.flm"
   ],
   "main": "./dist/extension.js",
+  "bin": {
+    "fastflowlm-mcp": "./dist/mcp-server.js"
+  },
   "contributes": {
     "commands": [
       {

@@ -1,4 +1,4 @@
-# FastFlowLM VS Code
+# FLM-VSCode
 
 Interact with and manage a FastFlowLM server from Visual Studio Code.
 
@@ -12,6 +12,7 @@ Interact with and manage a FastFlowLM server from Visual Studio Code.
 - Detect whether `flm` is installed on PATH and check for newer FastFlowLM releases.
 - Follow server output and model activity in the `FastFlowLM` output channel.
 - Configure the server URL, model, API key, command, arguments, and working directory.
+- Connect an external coding harness through the included MCP project bridge.
 
 ## Configuration
 
@@ -50,6 +51,30 @@ The chat panel displays live activity while a request runs, including model down
 
 The extension does not assume how FastFlowLM is installed or launched. Configure the command that matches your server installation. Native Chat requests use streaming responses when the server supports OpenAI-compatible SSE streaming.
 
+## External harnesses
+
+The package includes `dist/mcp-server.js`, a stdio MCP server that lets Claude Code, Hermes, DeepSeek-based harnesses, and other MCP clients use FastFlowLM alongside the current project. It provides `fastflowlm_chat`, `fastflowlm_models`, `project_list_files`, `project_read_file`, and `project_write_file` tools, plus persistent `memory_read`, `memory_write`, and `memory_delete` tools.
+
+Build the extension, then configure the harness to launch `node` with the absolute path to `dist/mcp-server.js`. Set `FLM_PROJECT_ROOT` to the project directory and configure `FLM_SERVER_URL`, `FLM_MODEL`, and optionally `FLM_API_KEY` in the MCP process environment. For example:
+
+```json
+{
+	"mcpServers": {
+		"fastflowlm": {
+			"command": "node",
+			"args": ["C:/path/to/flm-vscode/dist/mcp-server.js"],
+			"env": {
+				"FLM_PROJECT_ROOT": "C:/path/to/project",
+				"FLM_SERVER_URL": "http://127.0.0.1:8000/v1",
+				"FLM_MODEL": "qwen3.5:2b"
+			}
+		}
+	}
+}
+```
+
+The bridge uses stdin/stdout for MCP protocol messages and never writes logs to stdout. Project memory is stored in `.flm/memory.json` by default, or at the project-relative path specified by `FLM_MEMORY_FILE`. Memory entries are limited to 64 KB each and 512 KB total. Keep `project_write_file` and `memory_write` available only for harnesses and projects you trust; they can modify files under `FLM_PROJECT_ROOT`.
+
 ## Requirements
 
 - VS Code 1.137.0 or newer.
@@ -84,6 +109,10 @@ npm test
 ```
 
 Press `F5` in VS Code to launch an Extension Development Host.
+
+## Publishing
+
+To build a release VSIX, run `npm run package` followed by `npx --yes @vscode/vsce package --no-dependencies`. The generated artifact is named `flm-vscode-<version>.vsix` and includes both the VS Code extension and the external harness MCP bridge.
 
 ## Current Scope
 
