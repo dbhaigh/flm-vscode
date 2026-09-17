@@ -2,7 +2,7 @@
   "name": "flm-vscode",
   "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "publisher": "AndrewHaigh",
   "author": {
     "name": "Andrew Haigh"
@@ -33,7 +33,6 @@
   "activationEvents": [
     "onLanguageModelChatProvider:fastflowlm",
     "onChatParticipant:flm-vscode.flm",
-    "onChatParticipant:flm-vscode.claude",
     "onChatParticipant:flm-vscode.hermes",
     "onChatParticipant:flm-vscode.deepseek"
   ],
@@ -120,14 +119,6 @@
         ]
       },
       {
-        "id": "flm-vscode.claude",
-        "name": "claude",
-        "description": "Use the configured Claude harness via the chat.",
-        "commands": [
-          { "name": "status", "description": "Check whether the configured Claude harness is available." }
-        ]
-      },
-      {
         "id": "flm-vscode.hermes",
         "name": "hermes",
         "description": "Use the configured Hermes harness via the chat.",
@@ -208,7 +199,7 @@
             "type": "object",
             "required": ["name", "command"],
             "properties": {
-              "name": { "type": "string", "description": "Mention name, such as claude, hermes, or deepseek." },
+              "name": { "type": "string", "description": "Mention name, such as hermes or deepseek." },
               "command": { "type": "string", "description": "Executable command." },
               "args": { "type": "array", "items": { "type": "string" }, "default": [] },
               "versionArgs": { "type": "array", "items": { "type": "string" }, "default": ["--version"], "description": "Arguments used to read the installed version." },

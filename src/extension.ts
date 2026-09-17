@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { ChildProcess, ChildProcessWithoutNullStreams, execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,6 +41,7 @@ const MAX_PERSISTENT_MEMORY_BYTES = 512 * 1024;
 const FLM_INSTALLER_URL = 'https://github.com/ROCm/FastFlowLM/releases/latest/download/flm-setup.msi';
 const FLM_LATEST_RELEASE_API = 'https://api.github.com/repos/ROCm/FastFlowLM/releases/latest';
 const SELECTED_AGENT_STORAGE_KEY = 'flm-vscode.selectedAgent';
+const supportedExternalAgents = new Set(['deepseek', 'hermes']);
 const externalAgentSessionChecks = new Map<string, Promise<void>>();
 let selectedAgentState: vscode.Memento | undefined;
 const workspaceFileTools: OpenAITool[] = [
@@ -134,11 +135,15 @@ export async function downloadAndInstallFlm(reportStatus: StatusReporter = () =>
 		reportStatus('Verifying the FastFlowLM installer signature.');
 		verifyWindowsInstallerSignature(installerPath);
 		reportStatus('Starting the FastFlowLM installer.');
-		await new Promise<void>((resolve, reject) => {
-			const installer = spawn('msiexec.exe', ['/i', installerPath, '/passive', '/norestart'], { windowsHide: false });
-			installer.on('error', reject);
-			installer.on('exit', code => code === 0 ? resolve() : reject(new Error(`FastFlowLM installer exited with code ${code ?? 'unknown'}.`)));
-		});
+		const installer = spawn('msiexec.exe', ['/i', installerPath, '/passive', '/norestart'], { windowsHide: false });
+		try {
+			await new Promise<void>((resolve, reject) => {
+				installer.on('error', reject);
+				installer.on('exit', code => code === 0 ? resolve() : reject(new Error(`FastFlowLM installer exited with code ${code ?? 'unknown'}.`)));
+			});
+		} finally {
+			terminateChildProcess(installer);
+		}
 		reportStatus('FastFlowLM installation completed.');
 	} finally {
 		await fs.rm(installerPath, { force: true });
@@ -771,13 +776,21 @@ function configuredExternalAgents(): ExternalAgent[] {
 		const args = Array.isArray(agent.args) ? agent.args.filter((arg): arg is string => typeof arg === 'string') : [];
 		const versionArgs = Array.isArray(agent.versionArgs) ? agent.versionArgs.filter((arg): arg is string => typeof arg === 'string') : ['--version'];
 		const installArgs = Array.isArray(agent.installArgs) ? agent.installArgs.filter((arg): arg is string => typeof arg === 'string') : [];
-		if (!name || !command) {return [];}
+		if (!name || !command || !supportedExternalAgents.has(name)) {return [];}
 		return [{ name, command, args, versionArgs, installArgs, ...(typeof agent.cwd === 'string' && agent.cwd.trim() ? { cwd: agent.cwd.trim() } : {}), ...(typeof agent.latestVersionUrl === 'string' && agent.latestVersionUrl.trim() ? { latestVersionUrl: agent.latestVersionUrl.trim() } : {}), ...(typeof agent.latestVersionField === 'string' && agent.latestVersionField.trim() ? { latestVersionField: agent.latestVersionField.trim() } : {}), ...(typeof agent.installCommand === 'string' && agent.installCommand.trim() ? { installCommand: agent.installCommand.trim() } : {}), ...(agent.env && typeof agent.env === 'object' && !Array.isArray(agent.env) ? { env: Object.fromEntries(Object.entries(agent.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) } : {}) }];
 	});
 }
 
 function externalAgentPrompt(messages: ChatMessage[]): string {
 	return messages.map(message => `${message.role.toUpperCase()}:\n${message.content ?? ''}`).join('\n\n');
+}
+
+export function externalAgentError(agent: string, exitCode: number | null, errorOutput: string, standardOutput = ''): Error {
+	const detail = (errorOutput.trim() || standardOutput.trim());
+	if (agent.toLowerCase() === 'deepseek' && /MISSING_CREDENTIAL|DEEPSEEK_API_KEY|llm-deepseek/i.test(detail)) {
+		return new Error('DeepSeek credentials are missing. Configure the DeepSeek provider in its Models page, or make DEEPSEEK_API_KEY available to VS Code before starting the request.');
+	}
+	return new Error(`${agent} exited with code ${exitCode ?? 'unknown'}${detail ? `: ${detail.slice(0, 240)}` : '.'}`);
 }
 
 function resolveWindowsCommand(command: string): string {
@@ -789,6 +802,35 @@ function resolveWindowsCommand(command: string): string {
 	} catch {
 		return command;
 	}
+}
+
+function spawnExternalCommand(command: string, args: string[], options: Parameters<typeof spawn>[2] = {}): ChildProcessWithoutNullStreams {
+	const resolvedCommand = resolveWindowsCommand(command);
+	const isWindowsBatchFile = process.platform === 'win32' && ['.cmd', '.bat'].includes(extname(resolvedCommand).toLowerCase());
+	if (process.platform === 'win32' && extname(resolvedCommand).toLowerCase() === '.ps1') {
+		return spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', resolvedCommand, ...args], options) as ChildProcessWithoutNullStreams;
+	}
+	return spawn(resolvedCommand, args, { ...options, ...(isWindowsBatchFile ? { shell: true } : {}) }) as ChildProcessWithoutNullStreams;
+}
+
+function execExternalCommand(command: string, args: string[], options: Parameters<typeof execFileSync>[2] = {}): Buffer | string {
+	const resolvedCommand = resolveWindowsCommand(command);
+	const isWindowsBatchFile = process.platform === 'win32' && ['.cmd', '.bat'].includes(extname(resolvedCommand).toLowerCase());
+	if (process.platform === 'win32' && extname(resolvedCommand).toLowerCase() === '.ps1') {
+		return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', resolvedCommand, ...args], options);
+	}
+	// Pass args separately (not a manually-quoted string) so Node's own Windows argv escaping stays correct.
+	if (!isWindowsBatchFile) {return execFileSync(resolvedCommand, args, options);}
+	return execFileSync('cmd.exe', ['/d', '/s', '/c', resolvedCommand, ...args], options);
+}
+
+function terminateChildProcess(child: ChildProcess | undefined): void {
+	if (!child?.pid || child.exitCode !== null) {return;}
+	if (process.platform === 'win32') {
+		try {execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });} catch { /* The process may have already exited. */ }
+		return;
+	}
+	try {process.kill(-child.pid, 'SIGTERM');} catch {try {child.kill();} catch { /* The process may have already exited. */ }}
 }
 
 function persistentMemoryPath(): string {
@@ -828,10 +870,19 @@ async function recordAgentActivity(agent: string, action: AgentActivity['action'
 
 function externalAgentVersion(agent: ExternalAgent): string | undefined {
 	try {
-		const output = execFileSync(resolveWindowsCommand(agent.command), agent.versionArgs, { cwd: agent.cwd, env: { ...process.env, ...agent.env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+		const output = execExternalCommand(agent.command, agent.versionArgs, { cwd: agent.cwd, env: { ...process.env, ...agent.env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 		return String(output).match(/\d+(?:\.\d+){1,3}/)?.[0];
 	} catch {
 		return undefined;
+	}
+}
+
+function externalAgentAvailable(agent: ExternalAgent): boolean {
+	try {
+		execExternalCommand(agent.command, agent.versionArgs, { cwd: agent.cwd, env: { ...process.env, ...agent.env }, encoding: 'utf8', stdio: 'ignore' });
+		return true;
+	} catch {
+		return false;
 	}
 }
 
@@ -856,19 +907,24 @@ async function installExternalAgent(agent: ExternalAgent, latest: string | undef
 	const installCommand = agent.installCommand;
 	if (!installCommand) {throw new Error(`Configure installCommand and installArgs for @${agent.name} before installing it.`);}
 	const args = agent.installArgs.map(argument => argument.replaceAll('{version}', latest ?? 'latest'));
-	await new Promise<void>((resolve, reject) => {
-		const installer: ChildProcess = spawn(resolveWindowsCommand(installCommand), args, { cwd: agent.cwd, windowsHide: false, env: { ...process.env, ...agent.env } });
-		installer.stdout?.on('data', (data: Buffer) => console.log(`[${agent.name} installer] ${data.toString().trimEnd()}`));
-		installer.stderr?.on('data', (data: Buffer) => console.log(`[${agent.name} installer] ${data.toString().trimEnd()}`));
-		installer.on('error', reject);
-		installer.on('exit', code => code === 0 ? resolve() : reject(new Error(`${agent.name} installer exited with code ${code ?? 'unknown'}.`)));
-	});
+	const installer = spawnExternalCommand(installCommand, args, { cwd: agent.cwd, windowsHide: false, env: { ...process.env, ...agent.env } });
+	try {
+		await new Promise<void>((resolve, reject) => {
+			installer.stdout?.on('data', (data: Buffer) => console.log(`[${agent.name} installer] ${data.toString().trimEnd()}`));
+			installer.stderr?.on('data', (data: Buffer) => console.log(`[${agent.name} installer] ${data.toString().trimEnd()}`));
+			installer.on('error', reject);
+			installer.on('exit', code => code === 0 ? resolve() : reject(new Error(`${agent.name} installer exited with code ${code ?? 'unknown'}.`)));
+		});
+	} finally {
+		terminateChildProcess(installer);
+	}
 }
 
 async function performExternalAgentInstallationCheck(agent: ExternalAgent): Promise<void> {
-	const installed = externalAgentVersion(agent);
+	const available = externalAgentAvailable(agent);
+	const installed = available ? externalAgentVersion(agent) : undefined;
 	const latest = await latestExternalAgentVersion(agent);
-	if (!installed) {
+	if (!available) {
 		const choice = await vscode.window.showWarningMessage(`${agent.name} is not installed or is not available on PATH.`, 'Download and Install');
 		if (choice !== 'Download and Install') {
 			throw new Error(`${agent.name} is required to handle this request.`);
@@ -876,7 +932,7 @@ async function performExternalAgentInstallationCheck(agent: ExternalAgent): Prom
 		await installExternalAgent(agent, latest);
 		return;
 	}
-	if (latest && compareFlmVersions(latest, installed) > 0) {
+	if (latest && installed && compareFlmVersions(latest, installed) > 0) {
 		const choice = await vscode.window.showWarningMessage(`${agent.name} ${installed} is installed, but ${latest} is available.`, 'Download and Install');
 		if (choice === 'Download and Install') {await installExternalAgent(agent, latest);}
 	}
@@ -928,7 +984,7 @@ async function invokeExternalAgent(agent: ExternalAgent, messages: ChatMessage[]
 		await ensureExternalAgentInstalled(agent);
 		const prompt = externalAgentPrompt(messages);
 		const args = agent.args.map(argument => argument.replaceAll('{prompt}', prompt));
-		const child = spawn(resolveWindowsCommand(agent.command), args, {
+		const child = spawnExternalCommand(agent.command, args, {
 			cwd: agent.cwd,
 			windowsHide: true,
 			env: { ...process.env, ...agent.env }
@@ -945,13 +1001,13 @@ async function invokeExternalAgent(agent: ExternalAgent, messages: ChatMessage[]
 				child.on('error', reject);
 				child.on('exit', resolve);
 			});
-			if (exitCode !== 0) {throw new Error(`${agent.name} exited with code ${exitCode ?? 'unknown'}${errorOutput.trim() ? `: ${errorOutput.trim().slice(0, 240)}` : '.'}`);}
+			if (exitCode !== 0) {throw externalAgentError(agent.name, exitCode, errorOutput, output);}
 			if (!output.trim()) {throw new Error(`${agent.name} returned no response.`);}
 			await recordAgentActivity(agent.name, 'completed');
 			return output.trim();
 		} finally {
 			cancellation.dispose();
-			if (!child.killed && child.exitCode === null) {child.kill();}
+			terminateChildProcess(child);
 		}
 	} catch (error) {
 		await recordAgentActivity(agent.name, 'failed', error instanceof Error ? error.message : String(error));
@@ -1096,8 +1152,8 @@ export async function updateSelectedAgent(value: string, state: vscode.Memento |
 async function selectAgent(): Promise<void> {
 	const agents = configuredExternalAgents();
 	const items = [
-		{ label: 'FastFlowLM', description: 'Use the configured FastFlowLM model.', value: 'none' },
-		...agents.map(agent => ({ label: agent.name, description: `Use the configured ${agent.name} harness.`, value: agent.name }))
+		{ label: 'None', description: 'Use the configured FastFlowLM model.', value: 'none' },
+		...agents.map(agent => ({ label: agent.name === 'deepseek' ? 'DeepSeek' : 'Hermes', description: `Use the configured ${agent.name} harness.`, value: agent.name }))
 	];
 	const choice = await vscode.window.showQuickPick(items, {
 		placeHolder: 'Choose the default harness or agent for @flm requests',
@@ -1188,12 +1244,10 @@ export function activate(context: vscode.ExtensionContext) {
 		} catch (error) { response.markdown(`FastFlowLM error: ${error instanceof Error ? error.message : String(error)}`); }
 	});
 	flmParticipant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'flm-vscode.png');
-	const claudeParticipant = registerExternalParticipant('flm-vscode.claude', 'claude');
 	const hermesParticipant = registerExternalParticipant('flm-vscode.hermes', 'hermes');
 	const deepseekParticipant = registerExternalParticipant('flm-vscode.deepseek', 'deepseek');
 	context.subscriptions.push(
 		flmParticipant,
-		claudeParticipant,
 		hermesParticipant,
 		deepseekParticipant,
 		vscode.lm.registerLanguageModelChatProvider('fastflowlm', new FastFlowLMProvider(client)),

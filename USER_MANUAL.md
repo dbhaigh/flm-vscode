@@ -1,6 +1,10 @@
 # FLM-VSCode Extension User Manual
 
-This extension lets you work with a local or remote FastFlowLM server directly from VS Code, and it can also route selected prompts to external harnesses such as Claude Code, Hermes, and DeepSeek while still keeping FastFlowLM available as the default local model.
+This extension lets you work with a local or remote FastFlowLM server directly from VS Code, and it can also route selected prompts to Hermes and DeepSeek while still keeping FastFlowLM available as the default local model.
+
+## Version 0.1.7
+
+Version 0.1.7 limits direct harness selection to **None**, **DeepSeek**, and **Hermes**. Direct Claude routing was removed because Claude Code is available via Hermes. Existing direct Claude entries in `flm-vscode.externalAgents` are ignored by the selector and participant routing.
 
 ## What this extension does
 
@@ -12,7 +16,7 @@ The extension provides:
 - Workspace file tools for reading and writing files in the first workspace folder.
 - Support for direct prompts to external command-line harnesses and agents.
 - Version checks for installed harnesses and optional install/update flows.
-- An MCP bridge so external agents such as Claude Code, Hermes, and DeepSeek can discover and use FastFlowLM project tools.
+- An MCP bridge so external agents such as Hermes and DeepSeek can discover and use FastFlowLM project tools.
 
 ## Core abilities
 
@@ -43,9 +47,8 @@ You can configure external command-line agents and select one as the default har
 
 This is useful when you want to use a different coding agent while still retaining FastFlowLM for project tooling and model routing.
 
-Supported examples include:
+Supported choices include:
 
-- Claude Code (`claude`)
 - Hermes (`hermes`)
 - DeepSeek Harness (`dsh`)
 
@@ -89,7 +92,7 @@ The extension ships with a bridge server at `dist/mcp-server.js`. It exposes too
 - `memory_write`
 - `memory_delete`
 
-These tools can be used by Claude Code, Hermes, DeepSeek-based harnesses, and other MCP clients.
+These tools can be used by Hermes, DeepSeek-based harnesses, and other MCP clients.
 
 ## Settings reference
 
@@ -109,10 +112,10 @@ Open VS Code Settings and search for `FastFlowLM`.
 
 ### External agent settings
 
-- `flm-vscode.externalAgents`: Array of harness settings
+- `flm-vscode.externalAgents`: Array of DeepSeek or Hermes harness settings
 - `flm-vscode.selectedAgent`: Default harness name to use for ordinary `@flm` requests, or `none` to stay on FastFlowLM
 
-The command `FastFlowLM: Select Harness or Agent` lets you choose a default agent without editing settings manually.
+The command `FastFlowLM: Select Harness or Agent` lets you choose `None`, `DeepSeek`, or `Hermes` without editing settings manually.
 
 ## Example configuration
 
@@ -123,16 +126,6 @@ The command `FastFlowLM: Select Harness or Agent` lets you choose a default agen
   "flm-vscode.apiKey": "dummy_key",
   "flm-vscode.selectedAgent": "deepseek",
   "flm-vscode.externalAgents": [
-    {
-      "name": "claude",
-      "command": "claude",
-      "args": ["-p", "{prompt}"],
-      "versionArgs": ["--version"],
-      "latestVersionUrl": "https://registry.npmjs.org/@anthropic-ai%2Fclaude-code/latest",
-      "latestVersionField": "version",
-      "installCommand": "npm",
-      "installArgs": ["install", "--global", "@anthropic-ai/claude-code@{version}"]
-    },
     {
       "name": "hermes",
       "command": "hermes",
@@ -195,7 +188,7 @@ Configure the MCP server entry:
 }
 ```
 
-This lets Claude Code, Hermes, DeepSeek, or compatible MCP clients access FastFlowLM project tools and model tools.
+This lets Hermes, DeepSeek, or compatible MCP clients access FastFlowLM project tools and model tools.
 
 ## Best performance setup
 
@@ -211,7 +204,7 @@ To get the best results from this extension:
 
 3. Use the right harness for the right job.
    - FastFlowLM for local project work and model routing
-   - Claude Code / Hermes / DeepSeek for specialized workflows or tooling
+    - Hermes / DeepSeek for specialized workflows or tooling
 
 4. Keep the default agent aligned with the work you do most often.
    - Set `flm-vscode.selectedAgent` to the harness you want to use by default.

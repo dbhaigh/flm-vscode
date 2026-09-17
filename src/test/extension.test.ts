@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import { createServer, Server } from 'node:http';
 
 import * as vscode from 'vscode';
-import { compareFlmVersions, FastFlowLMClient, limitMessages, parseFlmVersion, readSelectedAgentPreference, requestedChatModels, updateSelectedAgent } from '../extension';
+import { compareFlmVersions, externalAgentError, FastFlowLMClient, limitMessages, parseFlmVersion, readSelectedAgentPreference, requestedChatModels, updateSelectedAgent } from '../extension';
 
 suite('Extension Test Suite', () => {
 	test('activates and registers the extension commands', async () => {
@@ -37,7 +37,7 @@ suite('Extension Test Suite', () => {
 		assert.deepStrictEqual(manifest.contributes?.languageModelChatProviders?.map(provider => provider.vendor), ['fastflowlm']);
 		assert.deepStrictEqual(
 			manifest.contributes?.chatParticipants?.map(participant => participant.name).sort(),
-			['claude', 'deepseek', 'flm', 'hermes']
+			['deepseek', 'flm', 'hermes']
 		);
 	});
 
@@ -64,8 +64,17 @@ suite('Extension Test Suite', () => {
 	});
 
 	test('recognizes external harness mentions', () => {
-		assert.deepStrictEqual(requestedChatModels('@flm ask @Claude Code and @deepseek to review this'), ['claude', 'deepseek']);
-		assert.deepStrictEqual(requestedChatModels('@claude ask @flm and @hermes to review this', true), ['claude', 'flm', 'hermes']);
+		assert.deepStrictEqual(requestedChatModels('@flm ask @deepseek and @hermes to review this'), ['deepseek', 'hermes']);
+		assert.deepStrictEqual(requestedChatModels('@hermes ask @flm and @deepseek to review this', true), ['hermes', 'flm', 'deepseek']);
+	});
+
+	test('explains missing DeepSeek credentials', () => {
+		assert.match(
+			externalAgentError('deepseek', 1, 'dsh: MISSING_CREDENTIAL: llm-deepseek').message,
+			/Configure the DeepSeek provider.*DEEPSEEK_API_KEY/
+		);
+		assert.strictEqual(externalAgentError('hermes', 1, '', 'login required').message, 'hermes exited with code 1: login required');
+		assert.strictEqual(externalAgentError('hermes', 1, 'request failed').message, 'hermes exited with code 1: request failed');
 	});
 
 	test('prioritizes persisted state over stale configuration values', () => {
@@ -73,9 +82,9 @@ suite('Extension Test Suite', () => {
 			get: () => 'deepseek'
 		} as unknown as vscode.WorkspaceConfiguration;
 		const state = {
-			get: (key: string) => key === 'flm-vscode.selectedAgent' ? 'claude' : undefined
+			get: (key: string) => key === 'flm-vscode.selectedAgent' ? 'hermes' : undefined
 		} as vscode.Memento;
-		assert.strictEqual(readSelectedAgentPreference(config, state), 'claude');
+		assert.strictEqual(readSelectedAgentPreference(config, state), 'hermes');
 	});
 
 	test('handles an unregistered selectedAgent configuration gracefully', async () => {
