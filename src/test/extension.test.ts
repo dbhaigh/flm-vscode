@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import { createServer, Server } from 'node:http';
 
 import * as vscode from 'vscode';
-import { compareFlmVersions, FastFlowLMClient, limitMessages, parseFlmVersion } from '../extension';
+import { compareFlmVersions, externalAgentError, FastFlowLMClient, limitMessages, parseFlmVersion, readSelectedAgentPreference, requestedChatModels, updateSelectedAgent } from '../extension';
 
 suite('Extension Test Suite', () => {
 	test('activates and registers the extension commands', async () => {
@@ -17,17 +17,28 @@ suite('Extension Test Suite', () => {
 	test('publishes the expected extension contributions', () => {
 		const extension = vscode.extensions.getExtension('AndrewHaigh.flm-vscode');
 		assert.ok(extension, 'The extension must be available in the test host.');
-		const manifest = extension.packageJSON as { contributes?: { commands?: Array<{ command: string }>; languageModelChatProviders?: Array<{ vendor: string }> } };
+		const manifest = extension.packageJSON as {
+			contributes?: {
+				commands?: Array<{ command: string }>;
+				languageModelChatProviders?: Array<{ vendor: string }>;
+				chatParticipants?: Array<{ id: string; name: string }>;
+			};
+		};
 		assert.deepStrictEqual(manifest.contributes?.commands?.map(command => command.command), [
 			'flm-vscode.openChat',
 			'flm-vscode.checkServer',
 			'flm-vscode.checkFlmInstallation',
+			'flm-vscode.selectAgent',
 			'flm-vscode.startServer',
 			'flm-vscode.stopServer',
 			'flm-vscode.restartServer',
 			'flm-vscode.showActivityLog'
 		]);
 		assert.deepStrictEqual(manifest.contributes?.languageModelChatProviders?.map(provider => provider.vendor), ['fastflowlm']);
+		assert.deepStrictEqual(
+			manifest.contributes?.chatParticipants?.map(participant => participant.name).sort(),
+			['deepseek', 'flm', 'hermes']
+		);
 	});
 
 	test('limits chat history to the configured input budget', () => {
@@ -46,6 +57,42 @@ suite('Extension Test Suite', () => {
 		assert.strictEqual(compareFlmVersions('v1.0.5', '1.0.4'), 1);
 		assert.strictEqual(compareFlmVersions('1.0.4', '1.0.5'), -1);
 		assert.strictEqual(compareFlmVersions('1.0.5', '1.0.5'), 0);
+	});
+
+	test('extracts unique addressed agents without routing @flm to itself', () => {
+		assert.deepStrictEqual(requestedChatModels('@flm /collaborate @Copilot @qwen @Copilot review this'), ['copilot', 'qwen']);
+	});
+
+	test('recognizes external harness mentions', () => {
+		assert.deepStrictEqual(requestedChatModels('@flm ask @deepseek and @hermes to review this'), ['deepseek', 'hermes']);
+		assert.deepStrictEqual(requestedChatModels('@hermes ask @flm and @deepseek to review this', true), ['hermes', 'flm', 'deepseek']);
+	});
+
+	test('explains missing DeepSeek credentials', () => {
+		assert.match(
+			externalAgentError('deepseek', 1, 'dsh: MISSING_CREDENTIAL: llm-deepseek').message,
+			/Configure the DeepSeek provider.*DEEPSEEK_API_KEY/
+		);
+		assert.strictEqual(externalAgentError('hermes', 1, '', 'login required').message, 'hermes exited with code 1: login required');
+		assert.strictEqual(externalAgentError('hermes', 1, 'request failed').message, 'hermes exited with code 1: request failed');
+	});
+
+	test('prioritizes persisted state over stale configuration values', () => {
+		const config = {
+			get: () => 'deepseek'
+		} as unknown as vscode.WorkspaceConfiguration;
+		const state = {
+			get: (key: string) => key === 'flm-vscode.selectedAgent' ? 'hermes' : undefined
+		} as vscode.Memento;
+		assert.strictEqual(readSelectedAgentPreference(config, state), 'hermes');
+	});
+
+	test('handles an unregistered selectedAgent configuration gracefully', async () => {
+		const state = {
+			update: async () => undefined,
+			get: () => undefined
+		} as unknown as vscode.Memento;
+		assert.strictEqual(await updateSelectedAgent('none', state), true);
 	});
 
 	test('lists models and sends chat requests to an OpenAI-compatible server', async () => {

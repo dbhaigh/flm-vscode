@@ -1,6 +1,7 @@
 .vscode/**
 .vscode-test/**
 .github/**
+.flm/**
 out/**
 node_modules/**
 src/**

@@ -61,6 +61,11 @@ const tools = [
 		name: 'memory_delete',
 		description: 'Delete a persistent project memory entry when it is obsolete.',
 		inputSchema: { type: 'object', required: ['key'], properties: { key: { type: 'string', description: 'Memory key to delete.' } }, additionalProperties: false }
+	},
+	{
+		name: 'agent_activity',
+		description: 'Read recent persistent activity from the configured harnesses and agents.',
+		inputSchema: { type: 'object', properties: {}, additionalProperties: false }
 	}
 ];
 
@@ -180,6 +185,7 @@ async function callTool(name: string, argumentsValue: Record<string, unknown>): 
 		case 'memory_read': return result(await readMemoryTool(argumentsValue));
 		case 'memory_write': return result(await writeMemoryTool(argumentsValue));
 		case 'memory_delete': return result(await deleteMemoryTool(argumentsValue));
+		case 'agent_activity': return result(await readMemoryTool({ key: 'agent-activity' }));
 		default: throw new Error(`Unknown tool: ${name}`);
 	}
 }

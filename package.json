@@ -2,7 +2,7 @@
   "name": "flm-vscode",
   "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.1.3",
+  "version": "0.1.7",
   "publisher": "AndrewHaigh",
   "author": {
     "name": "Andrew Haigh"
@@ -32,7 +32,9 @@
   ],
   "activationEvents": [
     "onLanguageModelChatProvider:fastflowlm",
-    "onChatParticipant:flm-vscode.flm"
+    "onChatParticipant:flm-vscode.flm",
+    "onChatParticipant:flm-vscode.hermes",
+    "onChatParticipant:flm-vscode.deepseek"
   ],
   "main": "./dist/extension.js",
   "bin": {
@@ -51,6 +53,10 @@
       {
         "command": "flm-vscode.checkFlmInstallation",
         "title": "FastFlowLM: Check FLM Installation"
+      },
+      {
+        "command": "flm-vscode.selectAgent",
+        "title": "FastFlowLM: Select Harness or Agent"
       },
       {
         "command": "flm-vscode.startServer",
@@ -74,6 +80,7 @@
         { "command": "flm-vscode.openChat" },
         { "command": "flm-vscode.checkServer" },
         { "command": "flm-vscode.checkFlmInstallation" },
+        { "command": "flm-vscode.selectAgent" },
         { "command": "flm-vscode.startServer" },
         { "command": "flm-vscode.stopServer" },
         { "command": "flm-vscode.restartServer" },
@@ -107,7 +114,24 @@
           { "name": "start", "description": "Start the configured local server." },
           { "name": "stop", "description": "Stop the managed local server." },
           { "name": "restart", "description": "Restart the managed local server." },
-          { "name": "update", "description": "Check for and install a newer FLM release." }
+          { "name": "update", "description": "Check for and install a newer FLM release." },
+          { "name": "collaborate", "description": "Coordinate the selected model with explicitly mentioned language models." }
+        ]
+      },
+      {
+        "id": "flm-vscode.hermes",
+        "name": "hermes",
+        "description": "Use the configured Hermes harness via the chat.",
+        "commands": [
+          { "name": "status", "description": "Check whether the configured Hermes harness is available." }
+        ]
+      },
+      {
+        "id": "flm-vscode.deepseek",
+        "name": "deepseek",
+        "description": "Use the configured DeepSeek harness via the chat.",
+        "commands": [
+          { "name": "status", "description": "Check whether the configured DeepSeek harness is available." }
         ]
       }
     ],
@@ -156,6 +180,42 @@
           "type": "boolean",
           "default": false,
           "description": "Include raw streaming responses and model reasoning in the activity log and dedicated chat panel."
+        },
+        "flm-vscode.allowWorkspaceWrites": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow @flm to request writes to files in the first workspace folder. Every write still requires confirmation."
+        },
+        "flm-vscode.memoryFile": {
+          "type": "string",
+          "default": ".flm/memory.json",
+          "description": "Workspace-relative persistent memory file shared with harnesses and agents."
+        },
+        "flm-vscode.externalAgents": {
+          "type": "array",
+          "default": [],
+          "description": "External harnesses that @flm may invoke by name. Prompts are sent on stdin unless an argument contains {prompt}; version and installer settings enable update checks.",
+          "items": {
+            "type": "object",
+            "required": ["name", "command"],
+            "properties": {
+              "name": { "type": "string", "description": "Mention name, such as hermes or deepseek." },
+              "command": { "type": "string", "description": "Executable command." },
+              "args": { "type": "array", "items": { "type": "string" }, "default": [] },
+              "versionArgs": { "type": "array", "items": { "type": "string" }, "default": ["--version"], "description": "Arguments used to read the installed version." },
+              "latestVersionUrl": { "type": "string", "description": "URL returning JSON release metadata." },
+              "latestVersionField": { "type": "string", "default": "version", "description": "Dot-separated JSON field containing the latest version." },
+              "installCommand": { "type": "string", "description": "Installer executable, such as npm or pip." },
+              "installArgs": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Installer arguments; {version} is replaced with the latest version." },
+              "cwd": { "type": "string", "description": "Optional working directory." },
+              "env": { "type": "object", "additionalProperties": { "type": "string" }, "default": {} }
+            }
+          }
+        },
+        "flm-vscode.selectedAgent": {
+          "type": "string",
+          "default": "none",
+          "description": "Default harness or agent for @flm requests. Use none to keep FastFlowLM selected, or choose a configured external agent name."
         }
       }
     }

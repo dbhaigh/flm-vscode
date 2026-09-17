@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
-import { ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { ChildProcess, ChildProcessWithoutNullStreams, execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 
 type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
 type ChatMessage = {
@@ -16,12 +16,60 @@ type OpenAITool = { type: 'function'; function: { name: string; description: str
 type ServerState = 'stopped' | 'starting' | 'running' | 'error';
 type StatusReporter = (message: string) => void;
 type ServerStarter = () => Promise<void>;
+type ExternalAgent = {
+	name: string;
+	command: string;
+	args: string[];
+	versionArgs: string[];
+	cwd?: string;
+	env?: Record<string, string>;
+	latestVersionUrl?: string;
+	latestVersionField?: string;
+	installCommand?: string;
+	installArgs: string[];
+};
+type PersistentMemoryEntry = { content: string; updatedAt: string };
+type PersistentMemory = Record<string, PersistentMemoryEntry>;
+type AgentActivity = { agent: string; action: 'started' | 'completed' | 'failed'; timestamp: string; detail?: string };
+type WorkspaceFileArguments = { path?: unknown; content?: unknown };
 const MAX_INPUT_TOKENS = 24576;
 const MAX_OUTPUT_TOKENS = 4096;
 const CHARS_PER_TOKEN = 4;
 const STREAM_TIMEOUT_MS = 120_000;
+const MAX_AGENT_ACTIVITY = 100;
+const MAX_PERSISTENT_MEMORY_BYTES = 512 * 1024;
 const FLM_INSTALLER_URL = 'https://github.com/ROCm/FastFlowLM/releases/latest/download/flm-setup.msi';
 const FLM_LATEST_RELEASE_API = 'https://api.github.com/repos/ROCm/FastFlowLM/releases/latest';
+const SELECTED_AGENT_STORAGE_KEY = 'flm-vscode.selectedAgent';
+const supportedExternalAgents = new Set(['deepseek', 'hermes']);
+const externalAgentSessionChecks = new Map<string, Promise<void>>();
+let selectedAgentState: vscode.Memento | undefined;
+const workspaceFileTools: OpenAITool[] = [
+	{
+		type: 'function',
+		function: {
+			name: 'workspace_list_files',
+			description: 'List entries in the current VS Code workspace folder. Paths are relative to that folder.',
+			parameters: { type: 'object', properties: { path: { type: 'string', description: 'Optional workspace-relative directory. Defaults to the workspace root.' } }, additionalProperties: false }
+		}
+	},
+	{
+		type: 'function',
+		function: {
+			name: 'workspace_read_file',
+			description: 'Read a UTF-8 text file from the current VS Code workspace folder.',
+			parameters: { type: 'object', required: ['path'], properties: { path: { type: 'string', description: 'Workspace-relative file path.' } }, additionalProperties: false }
+		}
+	},
+	{
+		type: 'function',
+		function: {
+			name: 'workspace_write_file',
+			description: 'Write a UTF-8 text file in the current VS Code workspace folder. Use only when the user has requested a file change; the user must confirm the write.',
+			parameters: { type: 'object', required: ['path', 'content'], properties: { path: { type: 'string', description: 'Workspace-relative file path.' }, content: { type: 'string', description: 'Complete file contents.' } }, additionalProperties: false }
+		}
+	}
+];
 
 export function parseFlmVersion(output: string): string | undefined {
 	try {
@@ -87,11 +135,15 @@ export async function downloadAndInstallFlm(reportStatus: StatusReporter = () =>
 		reportStatus('Verifying the FastFlowLM installer signature.');
 		verifyWindowsInstallerSignature(installerPath);
 		reportStatus('Starting the FastFlowLM installer.');
-		await new Promise<void>((resolve, reject) => {
-			const installer = spawn('msiexec.exe', ['/i', installerPath, '/passive', '/norestart'], { windowsHide: false });
-			installer.on('error', reject);
-			installer.on('exit', code => code === 0 ? resolve() : reject(new Error(`FastFlowLM installer exited with code ${code ?? 'unknown'}.`)));
-		});
+		const installer = spawn('msiexec.exe', ['/i', installerPath, '/passive', '/norestart'], { windowsHide: false });
+		try {
+			await new Promise<void>((resolve, reject) => {
+				installer.on('error', reject);
+				installer.on('exit', code => code === 0 ? resolve() : reject(new Error(`FastFlowLM installer exited with code ${code ?? 'unknown'}.`)));
+			});
+		} finally {
+			terminateChildProcess(installer);
+		}
 		reportStatus('FastFlowLM installation completed.');
 	} finally {
 		await fs.rm(installerPath, { force: true });
@@ -207,15 +259,22 @@ export class FastFlowLMClient {
 
 	public async chat(messages: ChatMessage[], model: string): Promise<string> {
 		this.reportStatus(`Sending task to model "${model}".`);
-		const response = await this.request(`${this.baseUrl}/chat/completions`, {
-			method: 'POST', headers: this.headers(), body: JSON.stringify({ model, messages, stream: false, max_tokens: MAX_OUTPUT_TOKENS })
-		});
-		if (!response.ok) {throw new Error(`Chat request failed (${response.status}): ${(await response.text()).slice(0, 240)}`);}
-		const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-		const content = payload.choices?.[0]?.message?.content;
-		if (!content) {throw new Error('FastFlowLM returned no assistant content.');}
-		this.reportStatus(`Model "${model}" completed the task.`);
-		return content;
+		await recordAgentActivity('flm', 'started', model);
+		try {
+			const response = await this.request(`${this.baseUrl}/chat/completions`, {
+				method: 'POST', headers: this.headers(), body: JSON.stringify({ model, messages, stream: false, max_tokens: MAX_OUTPUT_TOKENS })
+			});
+			if (!response.ok) {throw new Error(`Chat request failed (${response.status}): ${(await response.text()).slice(0, 240)}`);}
+			const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+			const content = payload.choices?.[0]?.message?.content;
+			if (!content) {throw new Error('FastFlowLM returned no assistant content.');}
+			await recordAgentActivity('flm', 'completed', model);
+			this.reportStatus(`Model "${model}" completed the task.`);
+			return content;
+		} catch (error) {
+			await recordAgentActivity('flm', 'failed', error instanceof Error ? error.message : String(error));
+			throw error;
+		}
 	}
 
 	public async streamChat(
@@ -231,6 +290,7 @@ export class FastFlowLMClient {
 	): Promise<void> {
 		messages = limitMessages(messages);
 		this.reportStatus(`Loading or selecting model "${model}" and sending the task.`);
+		await recordAgentActivity('flm', 'started', model);
 		const controller = new AbortController();
 		const cancellation = token.onCancellationRequested(() => controller.abort());
 		let timedOut = false;
@@ -238,6 +298,7 @@ export class FastFlowLMClient {
 		const emitRaw = (data: string) => {
 			if (this.settings.get<boolean>('debugStreaming', false)) {onRaw(data);}
 		};
+		let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 		try {
 			const response = await this.request(`${this.baseUrl}/chat/completions`, {
 				method: 'POST',
@@ -255,7 +316,8 @@ export class FastFlowLMClient {
 			if (!response.body) {throw new Error('FastFlowLM returned an empty response stream.');}
 			emitRaw(`[response] ${response.status} ${response.statusText} content-type=${response.headers.get('content-type') ?? 'unknown'}`);
 
-			const reader = response.body.getReader();
+			const streamReader = response.body.getReader();
+			reader = streamReader;
 			const decoder = new TextDecoder();
 			let buffer = '';
 			let completed = false;
@@ -263,7 +325,7 @@ export class FastFlowLMClient {
 			let responseStarted = false;
 			const toolCalls = new Map<number, ToolCall>();
 			while (!completed) {
-				const { done, value } = await reader.read();
+				const { done, value } = await streamReader.read();
 				const chunk = decoder.decode(value, { stream: !done });
 				emitRaw(chunk);
 				buffer += chunk;
@@ -315,11 +377,14 @@ export class FastFlowLMClient {
 			for (const call of toolCalls.values()) {
 				onToolCall({ ...call, function: { ...call.function, arguments: call.function.arguments || '{}' } });
 			}
+			await recordAgentActivity('flm', 'completed', model);
 			this.reportStatus(`Model "${model}" completed the task.`);
 		} catch (error) {
 			if (timedOut) {throw new Error(`FastFlowLM response timed out after ${STREAM_TIMEOUT_MS / 1000} seconds.`);}
+			await recordAgentActivity('flm', 'failed', error instanceof Error ? error.message : String(error));
 			throw error;
 		} finally {
+			await reader?.cancel().catch(() => {});
 			clearTimeout(timeout);
 			cancellation.dispose();
 		}
@@ -589,7 +654,529 @@ function participantHistory(history: readonly (vscode.ChatRequestTurn | vscode.C
 	return messages;
 }
 
+export function requestedChatModels(prompt: string, includeFlm = false): string[] {
+	const mentions = prompt.match(/(?:^|\s)@([A-Za-z][\w.-]*)/g) ?? [];
+	return [...new Set(mentions.map(value => value.trim().slice(1).toLowerCase()).filter(value => includeFlm || value !== 'flm'))];
+}
+
+const MAX_WORKSPACE_FILE_BYTES = 1024 * 1024;
+const MAX_WORKSPACE_TOOL_ROUNDS = 16;
+
+function workspaceRoot(): string {
+	const folder = vscode.workspace.workspaceFolders?.[0];
+	if (!folder) {throw new Error('Open a workspace before asking @flm to access files.');}
+	return resolve(folder.uri.fsPath);
+}
+
+function workspacePath(pathValue: unknown, allowRoot = false): string {
+	if (typeof pathValue !== 'string' || (!allowRoot && !pathValue.trim())) {throw new Error('A workspace-relative path is required.');}
+	const root = workspaceRoot();
+	const path = resolve(root, pathValue || '.');
+	if (path !== root && !path.startsWith(`${root}${sep}`)) {throw new Error('File path must stay inside the current workspace folder.');}
+	return path;
+}
+
+async function verifyWorkspacePath(path: string, forWrite = false): Promise<void> {
+	const root = workspaceRoot();
+	const existingPath = forWrite ? dirname(path) : path;
+	try {
+		const realRoot = await fs.realpath(root);
+		const realPath = await fs.realpath(existingPath);
+		if (realPath !== realRoot && !realPath.startsWith(`${realRoot}${sep}`)) {throw new Error('File path must stay inside the current workspace folder.');}
+	} catch (error) {
+		if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+			if (forWrite) {throw new Error('The destination directory must already exist inside the workspace.');}
+		}
+		throw error;
+	}
+}
+
+async function executeWorkspaceTool(name: string, argumentsValue: WorkspaceFileArguments): Promise<string> {
+	if (name === 'workspace_list_files') {
+		const directory = workspacePath(argumentsValue.path ?? '.', true);
+		await verifyWorkspacePath(directory);
+		const entries = await fs.readdir(directory, { withFileTypes: true });
+		return entries.filter(entry => !entry.name.startsWith('.') && !['node_modules', 'dist', 'out'].includes(entry.name))
+			.map(entry => entry.isDirectory() ? `${entry.name}/` : entry.name).sort().join('\n') || '(empty directory)';
+	}
+	if (typeof argumentsValue.path !== 'string' || !argumentsValue.path.trim()) {throw new Error('A workspace-relative file path is required.');}
+	const path = workspacePath(argumentsValue.path);
+	if (name === 'workspace_read_file') {
+		await verifyWorkspacePath(path);
+		const stats = await fs.stat(path);
+		if (stats.size > MAX_WORKSPACE_FILE_BYTES) {throw new Error('Files larger than 1 MB cannot be read by @flm.');}
+		return fs.readFile(path, 'utf8');
+	}
+	if (name === 'workspace_write_file') {
+		if (typeof argumentsValue.content !== 'string') {throw new Error('File content must be a string.');}
+		if (Buffer.byteLength(argumentsValue.content, 'utf8') > MAX_WORKSPACE_FILE_BYTES) {throw new Error('Files larger than 1 MB cannot be written by @flm.');}
+		if (!vscode.workspace.getConfiguration('flm-vscode').get<boolean>('allowWorkspaceWrites', true)) {return 'Workspace writes are disabled in FastFlowLM settings.';}
+		await verifyWorkspacePath(path, true);
+		const relativePath = relative(workspaceRoot(), path);
+		const choice = await vscode.window.showWarningMessage(`Allow @flm to write ${relativePath}?`, { modal: true }, 'Write File');
+		if (choice !== 'Write File') {return 'The user declined the file write.';}
+		await fs.writeFile(path, argumentsValue.content, 'utf8');
+		return `Wrote ${relativePath}.`;
+	}
+	throw new Error(`Unknown workspace tool: ${name}`);
+}
+
+async function runWorkspaceAgent(
+	client: FastFlowLMClient,
+	messages: ChatMessage[],
+	model: string,
+	response: vscode.ChatResponseStream,
+	token: vscode.CancellationToken
+): Promise<void> {
+	for (let round = 0; round < MAX_WORKSPACE_TOOL_ROUNDS; round++) {
+		const toolCalls: ToolCall[] = [];
+		let reply = '';
+		await client.streamChat(messages, model, workspaceFileTools, vscode.LanguageModelChatToolMode.Auto, token,
+			text => { reply += text; response.markdown(text); },
+			call => toolCalls.push(call)
+		);
+		if (!toolCalls.length) {return;}
+		messages.push({
+			role: 'assistant',
+			content: reply || null,
+			tool_calls: toolCalls
+		});
+		for (const call of toolCalls) {
+			let result = '';
+			try {
+				const argumentsValue = JSON.parse(call.function.arguments) as WorkspaceFileArguments;
+				result = await executeWorkspaceTool(call.function.name, argumentsValue);
+			} catch (error) {
+				result = `Tool error: ${error instanceof Error ? error.message : String(error)}`;
+			}
+			messages.push({ role: 'tool', tool_call_id: call.id, content: result });
+		}
+	}
+	throw new Error(`FastFlowLM exceeded the ${MAX_WORKSPACE_TOOL_ROUNDS}-round workspace tool limit. Try a narrower request.`);
+}
+
+async function selectNamedChatModel(mention: string): Promise<vscode.LanguageModelChat | undefined> {
+	const models = await vscode.lm.selectChatModels();
+	return models.find(candidate => [candidate.vendor, candidate.name, candidate.id, candidate.family]
+		.some(value => value.toLowerCase() === mention));
+}
+
+function externalAgentByName(mention: string): ExternalAgent | undefined {
+	const normalized = mention.trim().toLowerCase();
+	return configuredExternalAgents().find(agent => agent.name === normalized);
+}
+
+function configuredExternalAgents(): ExternalAgent[] {
+	const configured = vscode.workspace.getConfiguration('flm-vscode').get<unknown[]>('externalAgents', []);
+	return configured.flatMap(value => {
+		if (!value || typeof value !== 'object') {return [];}
+		const agent = value as Record<string, unknown>;
+		const name = typeof agent.name === 'string' ? agent.name.trim().toLowerCase() : '';
+		const command = typeof agent.command === 'string' ? agent.command.trim() : '';
+		const args = Array.isArray(agent.args) ? agent.args.filter((arg): arg is string => typeof arg === 'string') : [];
+		const versionArgs = Array.isArray(agent.versionArgs) ? agent.versionArgs.filter((arg): arg is string => typeof arg === 'string') : ['--version'];
+		const installArgs = Array.isArray(agent.installArgs) ? agent.installArgs.filter((arg): arg is string => typeof arg === 'string') : [];
+		if (!name || !command || !supportedExternalAgents.has(name)) {return [];}
+		return [{ name, command, args, versionArgs, installArgs, ...(typeof agent.cwd === 'string' && agent.cwd.trim() ? { cwd: agent.cwd.trim() } : {}), ...(typeof agent.latestVersionUrl === 'string' && agent.latestVersionUrl.trim() ? { latestVersionUrl: agent.latestVersionUrl.trim() } : {}), ...(typeof agent.latestVersionField === 'string' && agent.latestVersionField.trim() ? { latestVersionField: agent.latestVersionField.trim() } : {}), ...(typeof agent.installCommand === 'string' && agent.installCommand.trim() ? { installCommand: agent.installCommand.trim() } : {}), ...(agent.env && typeof agent.env === 'object' && !Array.isArray(agent.env) ? { env: Object.fromEntries(Object.entries(agent.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) } : {}) }];
+	});
+}
+
+function externalAgentPrompt(messages: ChatMessage[]): string {
+	return messages.map(message => `${message.role.toUpperCase()}:\n${message.content ?? ''}`).join('\n\n');
+}
+
+export function externalAgentError(agent: string, exitCode: number | null, errorOutput: string, standardOutput = ''): Error {
+	const detail = (errorOutput.trim() || standardOutput.trim());
+	if (agent.toLowerCase() === 'deepseek' && /MISSING_CREDENTIAL|DEEPSEEK_API_KEY|llm-deepseek/i.test(detail)) {
+		return new Error('DeepSeek credentials are missing. Configure the DeepSeek provider in its Models page, or make DEEPSEEK_API_KEY available to VS Code before starting the request.');
+	}
+	return new Error(`${agent} exited with code ${exitCode ?? 'unknown'}${detail ? `: ${detail.slice(0, 240)}` : '.'}`);
+}
+
+function resolveWindowsCommand(command: string): string {
+	if (process.platform !== 'win32' || extname(command) || command.includes('\\') || command.includes('/')) {return command;}
+	try {
+		const matches = String(execFileSync('where.exe', [command], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }))
+			.split(/\r?\n/).map(match => match.trim()).filter(Boolean);
+		return matches.find(match => ['.exe', '.cmd', '.com', '.bat'].includes(extname(match).toLowerCase())) ?? matches[0] ?? command;
+	} catch {
+		return command;
+	}
+}
+
+function spawnExternalCommand(command: string, args: string[], options: Parameters<typeof spawn>[2] = {}): ChildProcessWithoutNullStreams {
+	const resolvedCommand = resolveWindowsCommand(command);
+	const isWindowsBatchFile = process.platform === 'win32' && ['.cmd', '.bat'].includes(extname(resolvedCommand).toLowerCase());
+	if (process.platform === 'win32' && extname(resolvedCommand).toLowerCase() === '.ps1') {
+		return spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', resolvedCommand, ...args], options) as ChildProcessWithoutNullStreams;
+	}
+	return spawn(resolvedCommand, args, { ...options, ...(isWindowsBatchFile ? { shell: true } : {}) }) as ChildProcessWithoutNullStreams;
+}
+
+function execExternalCommand(command: string, args: string[], options: Parameters<typeof execFileSync>[2] = {}): Buffer | string {
+	const resolvedCommand = resolveWindowsCommand(command);
+	const isWindowsBatchFile = process.platform === 'win32' && ['.cmd', '.bat'].includes(extname(resolvedCommand).toLowerCase());
+	if (process.platform === 'win32' && extname(resolvedCommand).toLowerCase() === '.ps1') {
+		return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', resolvedCommand, ...args], options);
+	}
+	// Pass args separately (not a manually-quoted string) so Node's own Windows argv escaping stays correct.
+	if (!isWindowsBatchFile) {return execFileSync(resolvedCommand, args, options);}
+	return execFileSync('cmd.exe', ['/d', '/s', '/c', resolvedCommand, ...args], options);
+}
+
+function terminateChildProcess(child: ChildProcess | undefined): void {
+	if (!child?.pid || child.exitCode !== null) {return;}
+	if (process.platform === 'win32') {
+		try {execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });} catch { /* The process may have already exited. */ }
+		return;
+	}
+	try {process.kill(-child.pid, 'SIGTERM');} catch {try {child.kill();} catch { /* The process may have already exited. */ }}
+}
+
+function persistentMemoryPath(): string {
+	const configured = vscode.workspace.getConfiguration('flm-vscode').get<string>('memoryFile', '.flm/memory.json').trim();
+	return workspacePath(configured);
+}
+
+async function recordAgentActivity(agent: string, action: AgentActivity['action'], detail?: string): Promise<void> {
+	try {
+		const path = persistentMemoryPath();
+		let memory: PersistentMemory = {};
+		try {
+			memory = JSON.parse(await fs.readFile(path, 'utf8')) as PersistentMemory;
+		} catch (error) {
+			if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {return;}
+		}
+		const existing = memory['agent-activity'];
+		let activities: AgentActivity[] = [];
+		if (existing) {
+			try {
+				const parsed = JSON.parse(existing.content) as unknown;
+				if (Array.isArray(parsed)) {activities = parsed as AgentActivity[];}
+			} catch { /* Replace malformed activity history with a valid bounded history. */ }
+		}
+		activities.push({ agent, action, timestamp: new Date().toISOString(), ...(detail ? { detail: detail.slice(0, 240) } : {}) });
+		memory['agent-activity'] = { content: JSON.stringify(activities.slice(-MAX_AGENT_ACTIVITY)), updatedAt: new Date().toISOString() };
+		const serialized = JSON.stringify(memory, null, '\t');
+		if (Buffer.byteLength(serialized, 'utf8') > MAX_PERSISTENT_MEMORY_BYTES) {return;}
+		await fs.mkdir(dirname(path), { recursive: true });
+		const temporaryPath = `${path}.${process.pid}.tmp`;
+		await fs.writeFile(temporaryPath, `${serialized}\n`, 'utf8');
+		await fs.rename(temporaryPath, path);
+	} catch {
+		// Activity persistence must never prevent an agent from answering.
+	}
+}
+
+function externalAgentVersion(agent: ExternalAgent): string | undefined {
+	try {
+		const output = execExternalCommand(agent.command, agent.versionArgs, { cwd: agent.cwd, env: { ...process.env, ...agent.env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+		return String(output).match(/\d+(?:\.\d+){1,3}/)?.[0];
+	} catch {
+		return undefined;
+	}
+}
+
+function externalAgentAvailable(agent: ExternalAgent): boolean {
+	try {
+		execExternalCommand(agent.command, agent.versionArgs, { cwd: agent.cwd, env: { ...process.env, ...agent.env }, encoding: 'utf8', stdio: 'ignore' });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function versionField(payload: unknown, field = 'version'): unknown {
+	return field.split('.').reduce<unknown>((value, key) => value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined, payload);
+}
+
+async function latestExternalAgentVersion(agent: ExternalAgent): Promise<string | undefined> {
+	if (!agent.latestVersionUrl) {return undefined;}
+	try {
+		const response = await fetch(agent.latestVersionUrl, { headers: { Accept: 'application/json', 'User-Agent': 'flm-vscode' } });
+		if (!response.ok) {return undefined;}
+		const payload = await response.json() as unknown;
+		const value = versionField(payload, agent.latestVersionField);
+		return typeof value === 'string' ? value.match(/\d+(?:\.\d+){1,3}/)?.[0] : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+async function installExternalAgent(agent: ExternalAgent, latest: string | undefined): Promise<void> {
+	const installCommand = agent.installCommand;
+	if (!installCommand) {throw new Error(`Configure installCommand and installArgs for @${agent.name} before installing it.`);}
+	const args = agent.installArgs.map(argument => argument.replaceAll('{version}', latest ?? 'latest'));
+	const installer = spawnExternalCommand(installCommand, args, { cwd: agent.cwd, windowsHide: false, env: { ...process.env, ...agent.env } });
+	try {
+		await new Promise<void>((resolve, reject) => {
+			installer.stdout?.on('data', (data: Buffer) => console.log(`[${agent.name} installer] ${data.toString().trimEnd()}`));
+			installer.stderr?.on('data', (data: Buffer) => console.log(`[${agent.name} installer] ${data.toString().trimEnd()}`));
+			installer.on('error', reject);
+			installer.on('exit', code => code === 0 ? resolve() : reject(new Error(`${agent.name} installer exited with code ${code ?? 'unknown'}.`)));
+		});
+	} finally {
+		terminateChildProcess(installer);
+	}
+}
+
+async function performExternalAgentInstallationCheck(agent: ExternalAgent): Promise<void> {
+	const available = externalAgentAvailable(agent);
+	const installed = available ? externalAgentVersion(agent) : undefined;
+	const latest = await latestExternalAgentVersion(agent);
+	if (!available) {
+		const choice = await vscode.window.showWarningMessage(`${agent.name} is not installed or is not available on PATH.`, 'Download and Install');
+		if (choice !== 'Download and Install') {
+			throw new Error(`${agent.name} is required to handle this request.`);
+		}
+		await installExternalAgent(agent, latest);
+		return;
+	}
+	if (latest && installed && compareFlmVersions(latest, installed) > 0) {
+		const choice = await vscode.window.showWarningMessage(`${agent.name} ${installed} is installed, but ${latest} is available.`, 'Download and Install');
+		if (choice === 'Download and Install') {await installExternalAgent(agent, latest);}
+	}
+}
+
+function ensureExternalAgentInstalled(agent: ExternalAgent): Promise<void> {
+	const sessionKey = `${agent.name}:${agent.command}`;
+	const existing = externalAgentSessionChecks.get(sessionKey);
+	if (existing) {return existing;}
+	const check = performExternalAgentInstallationCheck(agent);
+	externalAgentSessionChecks.set(sessionKey, check);
+	return check;
+}
+
+function normalizeSelectedAgent(value: string | undefined): string {
+	const normalized = (value ?? 'none').trim().toLowerCase();
+	return normalized === 'fastflowlm' ? 'none' : normalized;
+}
+
+export function readSelectedAgentPreference(configuration: vscode.WorkspaceConfiguration, state: vscode.Memento | undefined): string {
+	const fromState = state?.get<string>(SELECTED_AGENT_STORAGE_KEY);
+	const fromConfig = configuration.get<string>('selectedAgent', 'none');
+	return normalizeSelectedAgent(fromState ?? fromConfig ?? 'none');
+}
+
+function selectedExternalAgent(): ExternalAgent | undefined {
+	const selected = readSelectedAgentPreference(vscode.workspace.getConfiguration('flm-vscode'), selectedAgentState);
+	if (!selected || selected === 'none' || selected === 'fastflowlm') {return undefined;}
+	return configuredExternalAgents().find(agent => agent.name === selected);
+}
+
+async function ensureSelectedExternalAgent(reportStatus: StatusReporter): Promise<ExternalAgent | undefined> {
+	const agent = selectedExternalAgent();
+	if (!agent) {return undefined;}
+	try {
+		await ensureExternalAgentInstalled(agent);
+		reportStatus(`${agent.name} is installed and ready for this session.`);
+		return agent;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		reportStatus(`${agent.name} is not ready: ${message}`);
+		throw error;
+	}
+}
+
+async function invokeExternalAgent(agent: ExternalAgent, messages: ChatMessage[], token: vscode.CancellationToken): Promise<string> {
+	await recordAgentActivity(agent.name, 'started');
+	try {
+		await ensureExternalAgentInstalled(agent);
+		const prompt = externalAgentPrompt(messages);
+		const args = agent.args.map(argument => argument.replaceAll('{prompt}', prompt));
+		const child = spawnExternalCommand(agent.command, args, {
+			cwd: agent.cwd,
+			windowsHide: true,
+			env: { ...process.env, ...agent.env }
+		});
+		let output = '';
+		let errorOutput = '';
+		const cancellation = token.onCancellationRequested(() => child.kill());
+		try {
+			if (!args.some(argument => argument.includes('{prompt}'))) {child.stdin.write(prompt);}
+			child.stdin.end();
+			child.stdout.on('data', data => output += String(data));
+			child.stderr.on('data', data => errorOutput += String(data));
+			const exitCode = await new Promise<number | null>((resolve, reject) => {
+				child.on('error', reject);
+				child.on('exit', resolve);
+			});
+			if (exitCode !== 0) {throw externalAgentError(agent.name, exitCode, errorOutput, output);}
+			if (!output.trim()) {throw new Error(`${agent.name} returned no response.`);}
+			await recordAgentActivity(agent.name, 'completed');
+			return output.trim();
+		} finally {
+			cancellation.dispose();
+			terminateChildProcess(child);
+		}
+	} catch (error) {
+		await recordAgentActivity(agent.name, 'failed', error instanceof Error ? error.message : String(error));
+		throw error;
+	}
+}
+
+async function runExternalParticipant(
+	name: string,
+	request: vscode.ChatRequest,
+	context: vscode.ChatContext,
+	response: vscode.ChatResponseStream,
+	token: vscode.CancellationToken,
+	client: FastFlowLMClient
+): Promise<void> {
+	const agent = externalAgentByName(name);
+	if (!agent) {throw new Error(`No external harness is configured for @${name}. Add it to flm-vscode.externalAgents.`);}
+	const messages = participantHistory(context.history);
+	messages.push({ role: 'user', content: request.prompt });
+	const ownReply = await invokeExternalAgent(agent, messages, token);
+	response.markdown(ownReply);
+	messages.push({ role: 'assistant', content: ownReply });
+
+	for (const mention of requestedChatModels(request.prompt, true).filter(candidate => candidate !== name)) {
+		if (token.isCancellationRequested) {return;}
+		const peer = externalAgentByName(mention);
+		if (peer) {
+			const peerReply = await invokeExternalAgent(peer, messages, token);
+			response.markdown(`\n\n**${peer.name}:**\n\n${peerReply}`);
+			messages.push({ role: 'assistant', content: peerReply });
+			continue;
+		}
+		if (mention === 'flm') {
+			const configuredModel = vscode.workspace.getConfiguration('flm-vscode').get<string>('model', 'fastflowlm');
+			const model = await client.resolveModel(configuredModel);
+			const flmReply = await client.chat(messages, model);
+			response.markdown(`\n\n**flm:**\n\n${flmReply}`);
+			messages.push({ role: 'assistant', content: flmReply });
+		}
+	}
+}
+
+class MultiAgentCoordinator {
+	public constructor(private readonly client: FastFlowLMClient, private readonly reportStatus: StatusReporter = () => {}) {}
+
+	public async collaborate(
+		request: vscode.ChatRequest,
+		context: vscode.ChatContext,
+		response: vscode.ChatResponseStream,
+		token: vscode.CancellationToken
+	): Promise<void> {
+		const requested = requestedChatModels(request.prompt);
+		const configuredModel = vscode.workspace.getConfiguration('flm-vscode').get<string>('model', 'fastflowlm');
+		const flmModel = await this.client.resolveModel(configuredModel);
+		const messages = participantHistory(context.history);
+		messages.push({ role: 'user', content: request.prompt });
+		this.reportStatus(`Collaborating with FastFlowLM (${flmModel}).`);
+		response.markdown(`**FastFlowLM (${flmModel}):**\n\n`);
+		let flmReply = '';
+		await this.client.streamChat(messages, flmModel, [], vscode.LanguageModelChatToolMode.Auto, token, text => {
+			flmReply += text;
+			response.markdown(text);
+		}, () => {});
+		messages.push({ role: 'assistant', content: flmReply });
+		response.markdown('\n\n');
+
+		const agents: vscode.LanguageModelChat[] = [];
+		const externalAgents = configuredExternalAgents();
+		for (const mention of requested) {
+			const externalAgent = externalAgents.find(agent => agent.name === mention);
+			if (externalAgent) {
+				if (token.isCancellationRequested) {return;}
+				this.reportStatus(`Collaborating with ${externalAgent.name}.`);
+				response.markdown(`**${externalAgent.name}:**\n\n`);
+				const content = await invokeExternalAgent(externalAgent, messages, token);
+				response.markdown(content);
+				messages.push({ role: 'assistant', content });
+				response.markdown('\n\n');
+				continue;
+			}
+			const model = await selectNamedChatModel(mention);
+			if (!model) {throw new Error(`No language model is available for @${mention}.`);}
+			if (!agents.some(agent => agent.id === model.id)) {agents.push(model);}
+		}
+		if (!agents.length) {throw new Error('Collaboration needs at least one explicitly mentioned @agent, such as @Copilot.');}
+		for (const [index, agent] of agents.entries()) {
+			if (token.isCancellationRequested) {return;}
+			const label = agent.name || agent.id;
+			messages.push({ role: 'user', content: `Act as ${label}. Review the other agent's response above and continue solving the original task. Return only your useful response.` });
+			this.reportStatus(`Collaborating with ${label} (${agent.vendor}).`);
+			response.markdown(`**${label}:**\n\n`);
+			const reply = await agent.sendRequest(messages.map(message => message.role === 'assistant'
+				? vscode.LanguageModelChatMessage.Assistant(message.content ?? '')
+				: vscode.LanguageModelChatMessage.User(message.content ?? '')), {
+				justification: 'Allow @flm to coordinate explicitly addressed language models on a shared task.'
+			}, token);
+			let content = '';
+			for await (const part of reply.stream) {
+				if (part instanceof vscode.LanguageModelTextPart) {
+					content += part.value;
+					response.markdown(part.value);
+				}
+			}
+			messages.push({ role: 'assistant', content });
+			response.markdown('\n\n');
+		}
+	}
+}
+
+async function delegateToChatModel(
+	mention: string,
+	messages: ChatMessage[],
+	response: vscode.ChatResponseStream,
+	token: vscode.CancellationToken
+): Promise<boolean> {
+	const externalAgent = configuredExternalAgents().find(agent => agent.name === mention);
+	if (externalAgent) {
+		response.markdown(await invokeExternalAgent(externalAgent, messages, token));
+		return true;
+	}
+	const model = await selectNamedChatModel(mention);
+	if (!model) {return false;}
+	const requestMessages = messages.map(message => message.role === 'assistant'
+		? vscode.LanguageModelChatMessage.Assistant(message.content ?? '')
+		: vscode.LanguageModelChatMessage.User(message.content ?? ''));
+	const modelResponse = await model.sendRequest(requestMessages, {
+		justification: 'Allow @flm to pass an explicitly addressed chat request to another language model.'
+	}, token);
+	for await (const part of modelResponse.stream) {
+		if (part instanceof vscode.LanguageModelTextPart) {response.markdown(part.value);}
+	}
+	return true;
+}
+
+export async function updateSelectedAgent(value: string, state: vscode.Memento | undefined = selectedAgentState): Promise<boolean> {
+	const normalized = normalizeSelectedAgent(value);
+	if (!state) {return false;}
+	await state.update(SELECTED_AGENT_STORAGE_KEY, normalized === 'none' ? undefined : normalized);
+	return true;
+}
+
+async function selectAgent(): Promise<void> {
+	const agents = configuredExternalAgents();
+	const items = [
+		{ label: 'None', description: 'Use the configured FastFlowLM model.', value: 'none' },
+		...agents.map(agent => ({ label: agent.name === 'deepseek' ? 'DeepSeek' : 'Hermes', description: `Use the configured ${agent.name} harness.`, value: agent.name }))
+	];
+	const choice = await vscode.window.showQuickPick(items, {
+		placeHolder: 'Choose the default harness or agent for @flm requests',
+		canPickMany: false
+	});
+	if (!choice) {return;}
+	const updated = await updateSelectedAgent(choice.value, selectedAgentState);
+	if (!updated) {
+		void vscode.window.showWarningMessage('The selected agent preference could not be saved to user settings in this VS Code session, but the command still completed.');
+	}
+	if (choice.value === 'none') {
+		void vscode.window.showInformationMessage('FastFlowLM is now the default @flm harness.');
+		return;
+	}
+	const agent = agents.find(candidate => candidate.name === choice.value);
+	if (agent) {
+		await ensureExternalAgentInstalled(agent);
+		void vscode.window.showInformationMessage(`${agent.name} is now the default @flm harness.`);
+	}
+}
+
 export function activate(context: vscode.ExtensionContext) {
+	selectedAgentState = context.globalState;
 	const output = vscode.window.createOutputChannel('FastFlowLM');
 	let chatPanel: ChatPanel | undefined;
 	const reportStatus: StatusReporter = message => {
@@ -607,6 +1194,23 @@ export function activate(context: vscode.ExtensionContext) {
 	const client = new FastFlowLMClient(reportStatus, () => server.ensureRunning());
 	const chat = new ChatPanel(client, server, reportStatus);
 	chatPanel = chat;
+	const coordinator = new MultiAgentCoordinator(client, reportStatus);
+	const registerExternalParticipant = (id: string, name: string) => {
+		const participant = vscode.chat.createChatParticipant(id, async (request, context, response, token) => {
+			try {
+				if (request.command === 'status') {
+					const configured = externalAgentByName(name);
+					response.markdown(configured ? `@${name} is configured and ready to check its harness.` : `@${name} is not configured.`);
+					return;
+				}
+				await runExternalParticipant(name, request, context, response, token, client);
+			} catch (error) {
+				response.markdown(`@${name} error: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		});
+		participant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'flm-vscode.png');
+		return participant;
+	};
 	const flmParticipant = vscode.chat.createChatParticipant('flm-vscode.flm', async (request, context, response, token) => {
 		try {
 			switch (request.command) {
@@ -620,17 +1224,32 @@ export function activate(context: vscode.ExtensionContext) {
 				case 'stop': server.stop(); response.markdown('FastFlowLM server stopped.'); return;
 				case 'restart': await server.restart(); response.markdown('FastFlowLM server restarted.'); return;
 				case 'update': await checkFlmInstallation(reportStatus); response.markdown('FastFlowLM update check completed.'); return;
+				case 'collaborate': await coordinator.collaborate(request, context, response, token); return;
+			}
+			const messages = participantHistory(context.history);
+			messages.push({ role: 'user', content: request.prompt });
+			const mentions = requestedChatModels(request.prompt);
+			if (mentions.length) {
+				await coordinator.collaborate(request, context, response, token);
+				return;
+			}
+			const selectedAgent = await ensureSelectedExternalAgent(reportStatus);
+			if (selectedAgent) {
+				response.markdown(await invokeExternalAgent(selectedAgent, messages, token));
+				return;
 			}
 			const configuredModel = vscode.workspace.getConfiguration('flm-vscode').get<string>('model', 'fastflowlm');
 			const model = await client.resolveModel(configuredModel);
-			const messages = participantHistory(context.history);
-			messages.push({ role: 'user', content: request.prompt });
-			await client.streamChat(messages, model, [], vscode.LanguageModelChatToolMode.Auto, token, text => response.markdown(text), () => {});
+			await runWorkspaceAgent(client, messages, model, response, token);
 		} catch (error) { response.markdown(`FastFlowLM error: ${error instanceof Error ? error.message : String(error)}`); }
 	});
 	flmParticipant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'flm-vscode.png');
+	const hermesParticipant = registerExternalParticipant('flm-vscode.hermes', 'hermes');
+	const deepseekParticipant = registerExternalParticipant('flm-vscode.deepseek', 'deepseek');
 	context.subscriptions.push(
 		flmParticipant,
+		hermesParticipant,
+		deepseekParticipant,
 		vscode.lm.registerLanguageModelChatProvider('fastflowlm', new FastFlowLMProvider(client)),
 		vscode.commands.registerCommand('flm-vscode.openChat', () => chat.show()),
 		vscode.commands.registerCommand('flm-vscode.checkServer', async () => {
@@ -638,6 +1257,7 @@ export function activate(context: vscode.ExtensionContext) {
 			catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)); }
 		}),
 		vscode.commands.registerCommand('flm-vscode.checkFlmInstallation', () => checkFlmInstallation(reportStatus)),
+		vscode.commands.registerCommand('flm-vscode.selectAgent', () => selectAgent()),
 		vscode.commands.registerCommand('flm-vscode.startServer', async () => {
 			try { await server.start(); void vscode.window.showInformationMessage('FastFlowLM server started.'); }
 			catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)); }
@@ -650,9 +1270,10 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('flm-vscode.showActivityLog', () => output.show()),
 		{ dispose: () => { process.off('exit', disposeServerOnHostExit); server.dispose(); output.dispose(); } }
 	);
-	if (vscode.workspace.getConfiguration('flm-vscode').get<boolean>('checkForUpdates', true)) {
+	if (vscode.workspace.getConfiguration('flm-vscode').get<boolean>('checkForUpdates', true) && !selectedExternalAgent()) {
 		void checkFlmInstallation(reportStatus);
 	}
+	void ensureSelectedExternalAgent(reportStatus).catch(() => {});
 }
 
 // This method is called when your extension is deactivated
