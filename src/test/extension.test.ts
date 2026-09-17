@@ -22,6 +22,7 @@ suite('Extension Test Suite', () => {
 				commands?: Array<{ command: string }>;
 				languageModelChatProviders?: Array<{ vendor: string }>;
 				chatParticipants?: Array<{ id: string; name: string }>;
+				configuration?: { properties?: Record<string, { password?: boolean }> };
 			};
 		};
 		assert.deepStrictEqual(manifest.contributes?.commands?.map(command => command.command), [
@@ -37,7 +38,7 @@ suite('Extension Test Suite', () => {
 		assert.deepStrictEqual(manifest.contributes?.languageModelChatProviders?.map(provider => provider.vendor), ['fastflowlm']);
 		assert.deepStrictEqual(
 			manifest.contributes?.chatParticipants?.map(participant => participant.name).sort(),
-			['deepseek', 'flm', 'hermes']
+			['flm', 'hermes']
 		);
 	});
 
@@ -49,6 +50,13 @@ suite('Extension Test Suite', () => {
 		const limited = limitMessages(messages);
 		assert.strictEqual(limited.at(-1)?.content, 'latest');
 		assert.ok(limited.reduce((total, message) => total + (message.content?.length ?? 0), 0) <= 24576 * 4);
+	});
+
+	test('explains oversized external harness requests', () => {
+		assert.strictEqual(
+			externalAgentError('hermes', 2, 'HTTP 400: Max length reached!').message,
+			'hermes rejected the request because its context is too long. Start a new chat or ask with less conversation history.'
+		);
 	});
 
 	test('parses and compares FLM versions', () => {
@@ -64,22 +72,18 @@ suite('Extension Test Suite', () => {
 	});
 
 	test('recognizes external harness mentions', () => {
-		assert.deepStrictEqual(requestedChatModels('@flm ask @deepseek and @hermes to review this'), ['deepseek', 'hermes']);
-		assert.deepStrictEqual(requestedChatModels('@hermes ask @flm and @deepseek to review this', true), ['hermes', 'flm', 'deepseek']);
+		assert.deepStrictEqual(requestedChatModels('@flm ask @hermes and @qwen to review this'), ['hermes', 'qwen']);
+		assert.deepStrictEqual(requestedChatModels('@hermes ask @flm and @qwen to review this', true), ['hermes', 'flm', 'qwen']);
 	});
 
-	test('explains missing DeepSeek credentials', () => {
-		assert.match(
-			externalAgentError('deepseek', 1, 'dsh: MISSING_CREDENTIAL: llm-deepseek').message,
-			/Configure the DeepSeek provider.*DEEPSEEK_API_KEY/
-		);
+	test('preserves external harness failure output', () => {
 		assert.strictEqual(externalAgentError('hermes', 1, '', 'login required').message, 'hermes exited with code 1: login required');
 		assert.strictEqual(externalAgentError('hermes', 1, 'request failed').message, 'hermes exited with code 1: request failed');
 	});
 
 	test('prioritizes persisted state over stale configuration values', () => {
 		const config = {
-			get: () => 'deepseek'
+			get: () => 'hermes'
 		} as unknown as vscode.WorkspaceConfiguration;
 		const state = {
 			get: (key: string) => key === 'flm-vscode.selectedAgent' ? 'hermes' : undefined

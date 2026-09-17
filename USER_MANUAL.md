@@ -1,10 +1,10 @@
 # FLM-VSCode Extension User Manual
 
-This extension lets you work with a local or remote FastFlowLM server directly from VS Code, and it can also route selected prompts to Hermes and DeepSeek while still keeping FastFlowLM available as the default local model.
+This extension lets you work with a local or remote FastFlowLM server directly from VS Code, and it can also route selected prompts to configured external harnesses such as Hermes while keeping FastFlowLM available as the default local model.
 
-## Version 0.1.7
+## Version 0.1.8
 
-Version 0.1.7 limits direct harness selection to **None**, **DeepSeek**, and **Hermes**. Direct Claude routing was removed because Claude Code is available via Hermes. Existing direct Claude entries in `flm-vscode.externalAgents` are ignored by the selector and participant routing.
+Version 0.1.8 removes a non-functional built-in harness integration. Direct Claude routing remains unavailable because Claude Code is available via Hermes.
 
 ## What this extension does
 
@@ -16,7 +16,7 @@ The extension provides:
 - Workspace file tools for reading and writing files in the first workspace folder.
 - Support for direct prompts to external command-line harnesses and agents.
 - Version checks for installed harnesses and optional install/update flows.
-- An MCP bridge so external agents such as Hermes and DeepSeek can discover and use FastFlowLM project tools.
+- An MCP bridge so external agents such as Hermes can discover and use FastFlowLM project tools.
 
 ## Core abilities
 
@@ -47,10 +47,7 @@ You can configure external command-line agents and select one as the default har
 
 This is useful when you want to use a different coding agent while still retaining FastFlowLM for project tooling and model routing.
 
-Supported choices include:
-
-- Hermes (`hermes`)
-- DeepSeek Harness (`dsh`)
+Supported choices include Hermes (`hermes`) and any other configured external harness.
 
 ### 3. External agent properties
 
@@ -92,7 +89,7 @@ The extension ships with a bridge server at `dist/mcp-server.js`. It exposes too
 - `memory_write`
 - `memory_delete`
 
-These tools can be used by Hermes, DeepSeek-based harnesses, and other MCP clients.
+These tools can be used by Hermes and other MCP clients.
 
 ## Settings reference
 
@@ -112,10 +109,10 @@ Open VS Code Settings and search for `FastFlowLM`.
 
 ### External agent settings
 
-- `flm-vscode.externalAgents`: Array of DeepSeek or Hermes harness settings
-- `flm-vscode.selectedAgent`: Default harness name to use for ordinary `@flm` requests, or `none` to stay on FastFlowLM
+- `flm-vscode.externalAgents`: Array of external harness settings, such as Hermes
+- `flm-vscode.selectedAgent`: Default configured harness name to use for ordinary `@flm` requests, or `none` to stay on FastFlowLM
 
-The command `FastFlowLM: Select Harness or Agent` lets you choose `None`, `DeepSeek`, or `Hermes` without editing settings manually.
+The command `FastFlowLM: Select Harness or Agent` lets you choose `None` or a configured external harness without editing settings manually.
 
 ## Example configuration
 
@@ -124,7 +121,7 @@ The command `FastFlowLM: Select Harness or Agent` lets you choose `None`, `DeepS
   "flm-vscode.serverUrl": "http://127.0.0.1:52625/v1",
   "flm-vscode.model": "qwen3.5:2b",
   "flm-vscode.apiKey": "dummy_key",
-  "flm-vscode.selectedAgent": "deepseek",
+   "flm-vscode.selectedAgent": "hermes",
   "flm-vscode.externalAgents": [
     {
       "name": "hermes",
@@ -133,16 +130,6 @@ The command `FastFlowLM: Select Harness or Agent` lets you choose `None`, `DeepS
       "installCommand": "pip",
       "installArgs": ["install", "--upgrade", "hermes-agent"]
     },
-    {
-      "name": "deepseek",
-      "command": "dsh",
-      "args": ["--profile", "headless", "{prompt}"],
-      "versionArgs": ["--version"],
-      "latestVersionUrl": "https://registry.npmjs.org/@deepseek-ai%2Fdsh/latest",
-      "latestVersionField": "version",
-      "installCommand": "npm",
-      "installArgs": ["install", "--global", "@deepseek-ai/dsh@{version}"]
-    }
   ]
 }
 ```
@@ -188,7 +175,7 @@ Configure the MCP server entry:
 }
 ```
 
-This lets Hermes, DeepSeek, or compatible MCP clients access FastFlowLM project tools and model tools.
+This lets Hermes or compatible MCP clients access FastFlowLM project tools and model tools.
 
 ## Best performance setup
 
@@ -204,7 +191,7 @@ To get the best results from this extension:
 
 3. Use the right harness for the right job.
    - FastFlowLM for local project work and model routing
-    - Hermes / DeepSeek for specialized workflows or tooling
+   - Hermes for specialized workflows or tooling
 
 4. Keep the default agent aligned with the work you do most often.
    - Set `flm-vscode.selectedAgent` to the harness you want to use by default.

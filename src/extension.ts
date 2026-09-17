@@ -33,6 +33,7 @@ type PersistentMemory = Record<string, PersistentMemoryEntry>;
 type AgentActivity = { agent: string; action: 'started' | 'completed' | 'failed'; timestamp: string; detail?: string };
 type WorkspaceFileArguments = { path?: unknown; content?: unknown };
 const MAX_INPUT_TOKENS = 24576;
+const MAX_EXTERNAL_INPUT_TOKENS = 8192;
 const MAX_OUTPUT_TOKENS = 4096;
 const CHARS_PER_TOKEN = 4;
 const STREAM_TIMEOUT_MS = 120_000;
@@ -41,7 +42,7 @@ const MAX_PERSISTENT_MEMORY_BYTES = 512 * 1024;
 const FLM_INSTALLER_URL = 'https://github.com/ROCm/FastFlowLM/releases/latest/download/flm-setup.msi';
 const FLM_LATEST_RELEASE_API = 'https://api.github.com/repos/ROCm/FastFlowLM/releases/latest';
 const SELECTED_AGENT_STORAGE_KEY = 'flm-vscode.selectedAgent';
-const supportedExternalAgents = new Set(['deepseek', 'hermes']);
+const supportedExternalAgents = new Set(['hermes']);
 const externalAgentSessionChecks = new Map<string, Promise<void>>();
 let selectedAgentState: vscode.Memento | undefined;
 const workspaceFileTools: OpenAITool[] = [
@@ -198,8 +199,8 @@ function modelThinkingText(payload: Record<string, unknown>): string | undefined
 	return undefined;
 }
 
-export function limitMessages(messages: ChatMessage[]): ChatMessage[] {
-	let remaining = MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
+export function limitMessages(messages: ChatMessage[], maxInputTokens = MAX_INPUT_TOKENS): ChatMessage[] {
+	let remaining = maxInputTokens * CHARS_PER_TOKEN;
 	const limited: ChatMessage[] = [];
 	for (let index = messages.length - 1; index >= 0 && remaining > 0; index--) {
 		const message = messages[index];
@@ -570,6 +571,7 @@ let activeServer: ServerManager | undefined;
 class ChatPanel {
 	private panel: vscode.WebviewPanel | undefined;
 	private messages: ChatMessage[] = [];
+	private backend = 'fastflowlm';
 	private model = vscode.workspace.getConfiguration('flm-vscode').get<string>('model', 'fastflowlm');
 	private cancellation: vscode.CancellationTokenSource | undefined;
 
@@ -583,7 +585,7 @@ class ChatPanel {
 		this.panel.onDidDispose(() => { this.cancel(); this.panel = undefined; });
 	}
 
-	private async handleMessage(message: { type: string; text?: string; model?: string }): Promise<void> {
+	private async handleMessage(message: { type: string; text?: string; model?: string; backend?: string }): Promise<void> {
 		try {
 			switch (message.type) {
 				case 'send': await this.send(message.text ?? ''); break;
@@ -592,6 +594,7 @@ class ChatPanel {
 				case 'stop': this.server.stop(); this.post({ type: 'status', status: this.server.snapshot() }); break;
 				case 'restart': await this.server.restart(); this.post({ type: 'status', status: this.server.snapshot() }); break;
 				case 'model': this.model = message.model?.trim() || this.model; break;
+				case 'backend': this.backend = message.backend?.trim().toLowerCase() || 'fastflowlm'; break;
 			}
 		} catch (error) { this.post({ type: 'error', message: error instanceof Error ? error.message : String(error) }); }
 	}
@@ -599,20 +602,28 @@ class ChatPanel {
 	private async send(text: string): Promise<void> {
 		const content = text.trim(); if (!content) {return;}
 		if (this.cancellation) {return;}
-		this.model = await this.client.resolveModel(this.model);
 		this.messages.push({ role: 'user', content }); this.post({ type: 'user', content }); this.post({ type: 'busy', busy: true });
-		this.reportStatus(`Working on your task with model "${this.model}".`);
-			this.post({ type: 'activity', content: `Waiting for FastFlowLM to load model "${this.model}"...` });
+		this.reportStatus(`Working on your task with ${this.backend}.`);
 		const cancellation = new vscode.CancellationTokenSource();
 		this.cancellation = cancellation;
 		try {
 			let reply = '';
-			await this.client.streamChat(this.messages, this.model, [], vscode.LanguageModelChatToolMode.Auto, cancellation.token,
-				textPart => { reply += textPart; this.post({ type: 'assistantDelta', content: textPart }); },
-				() => {},
-				activity => this.post({ type: 'activity', content: activity }),
-				raw => this.post({ type: 'raw', content: raw })
-			);
+			if (this.backend === 'fastflowlm') {
+				this.model = await this.client.resolveModel(this.model);
+				this.post({ type: 'activity', content: `Waiting for FastFlowLM to load model "${this.model}"...` });
+				await this.client.streamChat(this.messages, this.model, [], vscode.LanguageModelChatToolMode.Auto, cancellation.token,
+					textPart => { reply += textPart; this.post({ type: 'assistantDelta', content: textPart }); },
+					() => {},
+					activity => this.post({ type: 'activity', content: activity }),
+					raw => this.post({ type: 'raw', content: raw })
+				);
+			} else {
+				const agent = externalAgentByName(this.backend);
+				if (!agent) {throw new Error(`${this.backend} is not configured. Add it to FastFlowLM: External Agents.`);}
+				this.post({ type: 'activity', content: `Waiting for ${agent.name} to respond...` });
+				reply = await invokeExternalAgent(agent, this.messages, cancellation.token);
+				this.post({ type: 'assistant', content: reply });
+			}
 			this.messages.push({ role: 'assistant', content: reply });
 		} finally {
 			cancellation.dispose();
@@ -631,11 +642,9 @@ class ChatPanel {
 
 	private html(): string {
 		const nonce = randomBytes(16).toString('hex');
+		const backendOptions = ['<option value="fastflowlm">FastFlowLM</option>', ...configuredExternalAgents().map(agent => `<option value="${this.escape(agent.name)}">${this.escape(agent.name[0].toUpperCase() + agent.name.slice(1))}</option>`)].join('');
 		const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
-		return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>FastFlowLM</title>
-<style>:root{color-scheme:light dark}body{margin:0;padding:18px;color:var(--vscode-foreground);background:var(--vscode-editor-background);font:13px var(--vscode-font-family)}h1{font-size:18px;margin:0 0 4px}p{color:var(--vscode-descriptionForeground);margin:0 0 16px}.toolbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}button,select,textarea{font:inherit;color:inherit;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,transparent);padding:7px 9px;border-radius:3px}button{cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:0}button:hover{background:var(--vscode-button-hoverBackground)}button:disabled{opacity:.55;cursor:default}#status{border-left:3px solid var(--vscode-charts-green);padding:7px 10px;margin-bottom:8px;background:var(--vscode-textCodeBlock-background)}#status.error{border-color:var(--vscode-errorForeground)}#activity{display:grid;gap:3px;margin-bottom:14px;color:var(--vscode-descriptionForeground);font-size:11px}#activity div{padding:3px 7px;border-left:2px solid var(--vscode-charts-blue);white-space:pre-wrap}#activity .raw{font-family:var(--vscode-editor-font-family);color:var(--vscode-foreground);border-left-color:var(--vscode-charts-orange);background:var(--vscode-textCodeBlock-background)}#messages{display:grid;gap:10px;margin-bottom:14px}.message{padding:10px 12px;white-space:pre-wrap;line-height:1.45;border-radius:5px}.user{background:var(--vscode-textBlockQuote-background)}.assistant{background:var(--vscode-editor-inactiveSelectionBackground)}.composer{display:grid;gap:7px;position:sticky;bottom:0;background:var(--vscode-editor-background);padding-top:8px}textarea{resize:vertical;min-height:62px}.row{display:flex;gap:7px;align-items:center}.row select{flex:1;min-width:0}.hint{font-size:11px;color:var(--vscode-descriptionForeground)}</style></head>
-<body><h1>FastFlowLM</h1><p>Chat with an OpenAI-compatible FastFlowLM server.</p><div id="status">Server status: unknown</div><div id="activity" aria-live="polite"></div><div class="toolbar"><button data-action="start">Start</button><button data-action="stop">Stop</button><button data-action="restart">Restart</button><button data-action="models">Refresh models</button></div><div id="messages"></div><div class="composer"><div class="row"><select id="model" aria-label="Model"><option>${this.escape(this.model)}</option></select><span class="hint">Configure URL and command in Settings</span></div><textarea id="prompt" placeholder="Ask FastFlowLM something..."></textarea><button id="send">Send</button></div>
-<script nonce="${nonce}">const vscode=acquireVsCodeApi(),messages=document.getElementById('messages'),activity=document.getElementById('activity'),prompt=document.getElementById('prompt'),send=document.getElementById('send'),model=document.getElementById('model'),status=document.getElementById('status');let assistant;function add(role,content){const el=document.createElement('div');el.className='message '+role;el.textContent=content;messages.appendChild(el);el.scrollIntoView({behavior:'smooth',block:'nearest'});return el}function addActivity(content,raw){const item=document.createElement('div');if(raw)item.className='raw';item.textContent=content;activity.appendChild(item);item.scrollIntoView({behavior:'smooth',block:'nearest'})}function submit(){const text=prompt.value.trim();if(!text)return;vscode.postMessage({type:'send',text});prompt.value=''}send.addEventListener('click',submit);prompt.addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey))submit()});document.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',()=>vscode.postMessage({type:button.dataset.action})));model.addEventListener('change',()=>vscode.postMessage({type:'model',model:model.value}));window.addEventListener('message',event=>{const message=event.data;if(message.type==='user'||message.type==='assistant')add(message.type,message.content);if(message.type==='assistantDelta'){if(!assistant)assistant=add('assistant','');assistant.textContent+=message.content}if(message.type==='assistant')assistant=undefined;if(message.type==='activity')addActivity(message.content,false);if(message.type==='raw')addActivity(message.content,true);if(message.type==='busy')send.disabled=message.busy;if(message.type==='error'){status.textContent=message.message;status.className='error'}if(message.type==='status'){status.className=message.status.state==='error'?'error':'';status.textContent='Server: '+message.status.state+(message.status.pid?' (PID '+message.status.pid+')':'')+(message.status.error?' - '+message.status.error:'')}if(message.type==='models'){model.replaceChildren(...message.models.map(value=>{const option=document.createElement('option');option.value=value;option.textContent=value;return option}))}});vscode.postMessage({type:'models'});</script></body></html>`;
+		return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>FastFlowLM</title><style>:root{color-scheme:light dark}body{margin:0;padding:18px;color:var(--vscode-foreground);background:var(--vscode-editor-background);font:13px var(--vscode-font-family)}h1{font-size:18px;margin:0 0 4px}p{color:var(--vscode-descriptionForeground);margin:0 0 16px}.toolbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}button,select,textarea{font:inherit;color:inherit;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,transparent);padding:7px 9px;border-radius:3px}button{cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:0}button:hover{background:var(--vscode-button-hoverBackground)}button:disabled{opacity:.55;cursor:default}#status{border-left:3px solid var(--vscode-charts-green);padding:7px 10px;margin-bottom:8px;background:var(--vscode-textCodeBlock-background)}#status.error{border-color:var(--vscode-errorForeground)}#activity{display:grid;gap:3px;margin-bottom:14px;color:var(--vscode-descriptionForeground);font-size:11px}#activity div{padding:3px 7px;border-left:2px solid var(--vscode-charts-blue);white-space:pre-wrap}#activity .raw{font-family:var(--vscode-editor-font-family);color:var(--vscode-foreground);border-left-color:var(--vscode-charts-orange);background:var(--vscode-textCodeBlock-background)}#messages{display:grid;gap:10px;margin-bottom:14px}.message{padding:10px 12px;white-space:pre-wrap;line-height:1.45;border-radius:5px}.user{background:var(--vscode-textBlockQuote-background)}.assistant{background:var(--vscode-editor-inactiveSelectionBackground)}.composer{display:grid;gap:7px;position:sticky;bottom:0;background:var(--vscode-editor-background);padding-top:8px}textarea{resize:vertical;min-height:62px}.row{display:flex;gap:7px;align-items:center}.row select{flex:1;min-width:0}.hint{font-size:11px;color:var(--vscode-descriptionForeground)}</style></head><body><h1>FastFlowLM</h1><p>Chat with FastFlowLM or a configured external harness.</p><div id="status">Server status: unknown</div><div id="activity" aria-live="polite"></div><div class="toolbar"><button data-action="start">Start</button><button data-action="stop">Stop</button><button data-action="restart">Restart</button><button data-action="models">Refresh models</button></div><div id="messages"></div><div class="composer"><div class="row"><select id="backend" aria-label="Chat provider">${backendOptions}</select><select id="model" aria-label="Model"><option>${this.escape(this.model)}</option></select><span class="hint">Configure agents and server in Settings</span></div><textarea id="prompt" placeholder="Ask your selected chat provider something..."></textarea><button id="send">Send</button></div><script nonce="${nonce}">const vscode=acquireVsCodeApi(),messages=document.getElementById('messages'),activity=document.getElementById('activity'),prompt=document.getElementById('prompt'),send=document.getElementById('send'),model=document.getElementById('model'),backend=document.getElementById('backend'),status=document.getElementById('status');let assistant;function add(role,content){const el=document.createElement('div');el.className='message '+role;el.textContent=content;messages.appendChild(el);el.scrollIntoView({behavior:'smooth',block:'nearest'});return el}function addActivity(content,raw){const item=document.createElement('div');if(raw)item.className='raw';item.textContent=content;activity.appendChild(item);item.scrollIntoView({behavior:'smooth',block:'nearest'})}function updateBackend(){const external=backend.value!=='fastflowlm';document.querySelectorAll('[data-action]').forEach(button=>button.disabled=external);model.disabled=external}function submit(){const text=prompt.value.trim();if(!text)return;vscode.postMessage({type:'send',text});prompt.value=''}send.addEventListener('click',submit);prompt.addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey))submit()});document.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',()=>vscode.postMessage({type:button.dataset.action})));model.addEventListener('change',()=>vscode.postMessage({type:'model',model:model.value}));backend.addEventListener('change',()=>{vscode.postMessage({type:'backend',backend:backend.value});updateBackend()});updateBackend();window.addEventListener('message',event=>{const message=event.data;if(message.type==='user'||message.type==='assistant')add(message.type,message.content);if(message.type==='assistantDelta'){if(!assistant)assistant=add('assistant','');assistant.textContent+=message.content}if(message.type==='assistant')assistant=undefined;if(message.type==='activity')addActivity(message.content,false);if(message.type==='raw')addActivity(message.content,true);if(message.type==='busy')send.disabled=message.busy;if(message.type==='error'){status.textContent=message.message;status.className='error'}if(message.type==='status'){status.className=message.status.state==='error'?'error':'';status.textContent='Server: '+message.status.state+(message.status.pid?' (PID '+message.status.pid+')':'')}});</script></body></html>`;
 	}
 
 	private escape(value: string): string { return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] ?? character)); }
@@ -781,14 +790,19 @@ function configuredExternalAgents(): ExternalAgent[] {
 	});
 }
 
+function externalAgentEnvironment(agent: ExternalAgent): NodeJS.ProcessEnv {
+	return { ...process.env, ...agent.env };
+}
+
 function externalAgentPrompt(messages: ChatMessage[]): string {
-	return messages.map(message => `${message.role.toUpperCase()}:\n${message.content ?? ''}`).join('\n\n');
+	const limitedMessages = limitMessages(messages, MAX_EXTERNAL_INPUT_TOKENS);
+	return limitedMessages.map(message => `${message.role.toUpperCase()}:\n${message.content ?? ''}`).join('\n\n');
 }
 
 export function externalAgentError(agent: string, exitCode: number | null, errorOutput: string, standardOutput = ''): Error {
 	const detail = (errorOutput.trim() || standardOutput.trim());
-	if (agent.toLowerCase() === 'deepseek' && /MISSING_CREDENTIAL|DEEPSEEK_API_KEY|llm-deepseek/i.test(detail)) {
-		return new Error('DeepSeek credentials are missing. Configure the DeepSeek provider in its Models page, or make DEEPSEEK_API_KEY available to VS Code before starting the request.');
+	if (/max length|context length|too many tokens|maximum token/i.test(detail)) {
+		return new Error(`${agent} rejected the request because its context is too long. Start a new chat or ask with less conversation history.`);
 	}
 	return new Error(`${agent} exited with code ${exitCode ?? 'unknown'}${detail ? `: ${detail.slice(0, 240)}` : '.'}`);
 }
@@ -907,7 +921,7 @@ async function installExternalAgent(agent: ExternalAgent, latest: string | undef
 	const installCommand = agent.installCommand;
 	if (!installCommand) {throw new Error(`Configure installCommand and installArgs for @${agent.name} before installing it.`);}
 	const args = agent.installArgs.map(argument => argument.replaceAll('{version}', latest ?? 'latest'));
-	const installer = spawnExternalCommand(installCommand, args, { cwd: agent.cwd, windowsHide: false, env: { ...process.env, ...agent.env } });
+	const installer = spawnExternalCommand(installCommand, args, { cwd: agent.cwd, windowsHide: false, env: externalAgentEnvironment(agent) });
 	try {
 		await new Promise<void>((resolve, reject) => {
 			installer.stdout?.on('data', (data: Buffer) => console.log(`[${agent.name} installer] ${data.toString().trimEnd()}`));
@@ -987,7 +1001,7 @@ async function invokeExternalAgent(agent: ExternalAgent, messages: ChatMessage[]
 		const child = spawnExternalCommand(agent.command, args, {
 			cwd: agent.cwd,
 			windowsHide: true,
-			env: { ...process.env, ...agent.env }
+			env: externalAgentEnvironment(agent)
 		});
 		let output = '';
 		let errorOutput = '';
@@ -1153,7 +1167,7 @@ async function selectAgent(): Promise<void> {
 	const agents = configuredExternalAgents();
 	const items = [
 		{ label: 'None', description: 'Use the configured FastFlowLM model.', value: 'none' },
-		...agents.map(agent => ({ label: agent.name === 'deepseek' ? 'DeepSeek' : 'Hermes', description: `Use the configured ${agent.name} harness.`, value: agent.name }))
+		...agents.map(agent => ({ label: agent.name, description: `Use the configured ${agent.name} harness.`, value: agent.name }))
 	];
 	const choice = await vscode.window.showQuickPick(items, {
 		placeHolder: 'Choose the default harness or agent for @flm requests',
@@ -1245,11 +1259,9 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	flmParticipant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'flm-vscode.png');
 	const hermesParticipant = registerExternalParticipant('flm-vscode.hermes', 'hermes');
-	const deepseekParticipant = registerExternalParticipant('flm-vscode.deepseek', 'deepseek');
 	context.subscriptions.push(
 		flmParticipant,
 		hermesParticipant,
-		deepseekParticipant,
 		vscode.lm.registerLanguageModelChatProvider('fastflowlm', new FastFlowLMProvider(client)),
 		vscode.commands.registerCommand('flm-vscode.openChat', () => chat.show()),
 		vscode.commands.registerCommand('flm-vscode.checkServer', async () => {

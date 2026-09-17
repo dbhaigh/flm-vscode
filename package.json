@@ -2,7 +2,7 @@
   "name": "flm-vscode",
   "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "AndrewHaigh",
   "author": {
     "name": "Andrew Haigh"
@@ -33,8 +33,7 @@
   "activationEvents": [
     "onLanguageModelChatProvider:fastflowlm",
     "onChatParticipant:flm-vscode.flm",
-    "onChatParticipant:flm-vscode.hermes",
-    "onChatParticipant:flm-vscode.deepseek"
+    "onChatParticipant:flm-vscode.hermes"
   ],
   "main": "./dist/extension.js",
   "bin": {
@@ -125,14 +124,6 @@
         "commands": [
           { "name": "status", "description": "Check whether the configured Hermes harness is available." }
         ]
-      },
-      {
-        "id": "flm-vscode.deepseek",
-        "name": "deepseek",
-        "description": "Use the configured DeepSeek harness via the chat.",
-        "commands": [
-          { "name": "status", "description": "Check whether the configured DeepSeek harness is available." }
-        ]
       }
     ],
     "configuration": {
@@ -194,12 +185,12 @@
         "flm-vscode.externalAgents": {
           "type": "array",
           "default": [],
-          "description": "External harnesses that @flm may invoke by name. Prompts are sent on stdin unless an argument contains {prompt}; version and installer settings enable update checks.",
+          "description": "External harnesses that @flm may invoke by name, such as Hermes. Prompts are sent on stdin unless an argument contains {prompt}; version and installer settings enable update checks.",
           "items": {
             "type": "object",
             "required": ["name", "command"],
             "properties": {
-              "name": { "type": "string", "description": "Mention name, such as hermes or deepseek." },
+              "name": { "type": "string", "description": "Mention name, such as hermes." },
               "command": { "type": "string", "description": "Executable command." },
               "args": { "type": "array", "items": { "type": "string" }, "default": [] },
               "versionArgs": { "type": "array", "items": { "type": "string" }, "default": ["--version"], "description": "Arguments used to read the installed version." },
@@ -215,7 +206,7 @@
         "flm-vscode.selectedAgent": {
           "type": "string",
           "default": "none",
-          "description": "Default harness or agent for @flm requests. Use none to keep FastFlowLM selected, or choose a configured external agent name."
+          "description": "Default harness or agent for @flm requests. Use none for FastFlowLM or choose a configured external agent name."
         }
       }
     }
