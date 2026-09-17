@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
+import { realpathSync } from 'node:fs';
 
 type JsonRpcRequest = { jsonrpc?: string; id?: number | string; method?: string; params?: Record<string, unknown> };
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
@@ -81,13 +82,32 @@ function projectPath(pathValue: unknown): string {
 	return path;
 }
 
+function verifyProjectPath(path: string, allowMissing: boolean): void {
+	const realRoot = realpathSync(projectRoot);
+	let candidate = path;
+	while (true) {
+		try {
+			const realPath = realpathSync(candidate);
+			if (realPath !== realRoot && !realPath.startsWith(`${realRoot}${sep}`)) {throw new Error('Project path must stay inside the configured project root.');}
+			return;
+		} catch (error) {
+			if (!allowMissing || !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {throw error;}
+			const parent = dirname(candidate);
+			if (parent === candidate) {throw error;}
+			candidate = parent;
+		}
+	}
+}
+
 function memoryPath(): string {
 	return process.env.FLM_MEMORY_FILE ? projectPath(process.env.FLM_MEMORY_FILE) : resolve(projectRoot, '.flm', 'memory.json');
 }
 
 async function readMemory(): Promise<MemoryStore> {
 	try {
-		const parsed = JSON.parse(await fs.readFile(memoryPath(), 'utf8')) as unknown;
+		const path = memoryPath();
+		verifyProjectPath(path, true);
+		const parsed = JSON.parse(await fs.readFile(path, 'utf8')) as unknown;
 		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {throw new Error('Memory file must contain an object.');}
 		return parsed as MemoryStore;
 	} catch (error) {
@@ -100,6 +120,7 @@ async function writeMemory(memory: MemoryStore): Promise<void> {
 	const serialized = JSON.stringify(memory, null, '\t');
 	if (Buffer.byteLength(serialized, 'utf8') > maxMemoryBytes) {throw new Error('Project memory is limited to 512 KB.');}
 	const path = memoryPath();
+	verifyProjectPath(path, true);
 	await fs.mkdir(dirname(path), { recursive: true });
 	const temporaryPath = `${path}.${process.pid}.tmp`;
 	await fs.writeFile(temporaryPath, `${serialized}\n`, 'utf8');
@@ -164,6 +185,7 @@ async function chat(argumentsValue: Record<string, unknown>): Promise<string> {
 
 async function listFiles(pathValue: unknown): Promise<string> {
 	const directory = projectPath(pathValue || '.');
+	verifyProjectPath(directory, false);
 	const entries = await fs.readdir(directory, { withFileTypes: true });
 	return entries.filter(entry => !entry.name.startsWith('.') && !['node_modules', 'dist', 'out'].includes(entry.name))
 		.map(entry => entry.isDirectory() ? `${entry.name}/` : entry.name).sort().join('\n') || '(empty directory)';
@@ -174,10 +196,15 @@ async function callTool(name: string, argumentsValue: Record<string, unknown>): 
 		case 'fastflowlm_models': return result((await models()).join('\n') || '(no models available)');
 		case 'fastflowlm_chat': return result(await chat(argumentsValue));
 		case 'project_list_files': return result(await listFiles(argumentsValue.path));
-		case 'project_read_file': return result(await fs.readFile(projectPath(argumentsValue.path), 'utf8'));
+		case 'project_read_file': {
+			const path = projectPath(argumentsValue.path);
+			verifyProjectPath(path, false);
+			return result(await fs.readFile(path, 'utf8'));
+		}
 		case 'project_write_file': {
 			if (typeof argumentsValue.content !== 'string') {throw new Error('File content must be a string.');}
 			const path = projectPath(argumentsValue.path);
+			verifyProjectPath(path, true);
 			await fs.mkdir(dirname(path), { recursive: true });
 			await fs.writeFile(path, argumentsValue.content, 'utf8');
 			return result(`Wrote ${relative(projectRoot, path)}.`);
