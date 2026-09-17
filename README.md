@@ -2,11 +2,28 @@
 
 Interact with and manage a FastFlowLM server from Visual Studio Code.
 
+## Quick start
+
+1. Install the extension and open the project you want to work in.
+2. Start or point the extension at a FastFlowLM server exposing an OpenAI-compatible `/v1` API.
+3. Open VS Code Settings and configure the main FastFlowLM values:
+   - `flm-vscode.serverUrl`
+   - `flm-vscode.model`
+   - `flm-vscode.apiKey` when needed
+4. If you want direct external-agent routing, add one or more entries under `flm-vscode.externalAgents` and set `flm-vscode.selectedAgent` to the harness you want by default.
+5. Open Chat and use `@flm` with a command like `/status` or a normal prompt.
+6. Use the command palette commands for `FastFlowLM: Check Server`, `FastFlowLM: Start Server`, and `FastFlowLM: Select Harness or Agent` when needed.
+
+For the complete end-user guide, see [USER_MANUAL.md](USER_MANUAL.md).
+
 ## Features
 
 - Chat with a FastFlowLM server through a webview panel.
 - Register FastFlowLM as a native VS Code Chat language model provider.
 - Use the `@flm` chat participant and `/status`, `/models`, `/start`, `/stop`, `/restart`, or `/update` commands to manage the server directly in Chat.
+- Let `@flm` inspect and update files in the first open workspace folder through model tool calls.
+- Address another language-model-backed chat member from `@flm`, for example `@flm ask @Copilot to review this function`.
+- Run `/collaborate` to pass a shared task through the selected model and explicitly mentioned agents, for example `@flm /collaborate @Copilot @qwen review this function`.
 - Discover available models through the OpenAI-compatible `/models` endpoint.
 - Check connectivity and manage a local FastFlowLM server from the Command Palette.
 - Detect whether `flm` is installed on PATH and check for newer FastFlowLM releases.
@@ -26,6 +43,8 @@ Open **Settings** and search for **FastFlowLM**:
 - `flm-vscode.serverCwd`: Optional working directory for the server process.
 - `flm-vscode.checkForUpdates`: Check FLM availability and releases when the extension activates. Defaults to `true`.
 - `flm-vscode.debugStreaming`: Include raw streaming responses and model reasoning in activity output. Defaults to `false`.
+- `flm-vscode.allowWorkspaceWrites`: Allow `@flm` to request workspace file writes. Defaults to `true`; every write still requires a VS Code confirmation dialog.
+- `flm-vscode.selectedAgent`: Default harness for ordinary `@flm` prompts. Set to `none` for FastFlowLM, or use **FastFlowLM: Select Harness or Agent** to choose a configured external agent.
 
 When the configured model is unavailable, the extension selects the first model reported by the server. The `@flm` participant also includes earlier prompts and responses from the current participant conversation.
 
@@ -50,6 +69,51 @@ For example, a local Python server can be managed with:
 The chat panel displays live activity while a request runs, including model download/load messages, server status events, reasoning progress, and streamed response text. When the extension starts the server as a child process, its stdout and stderr are also shown in the chat and in the `FastFlowLM` output channel. Use **FastFlowLM: Show Activity Log** to view the complete activity history. A separately managed server must include its download/load activity in the OpenAI-compatible streaming response for the extension to display it.
 
 The extension does not assume how FastFlowLM is installed or launched. Configure the command that matches your server installation. Native Chat requests use streaming responses when the server supports OpenAI-compatible SSE streaming.
+
+Normal `@flm` prompts can use `workspace_list_files`, `workspace_read_file`, and `workspace_write_file` tools. File paths are relative to the first workspace folder, traversal outside that folder is rejected, text files are limited to 1 MB, and each write requires explicit confirmation. Disable `flm-vscode.allowWorkspaceWrites` to make the participant read-only.
+
+When a normal `@flm` prompt explicitly mentions a language model-backed chat member, the extension resolves the mention against VS Code language models by vendor, name, id, or family and streams the request to that model. Copilot is normally available under the `copilot` vendor. Otherwise, ordinary prompts use the selected harness, or FastFlowLM when no harness is selected. VS Code does not expose a public API for one extension to invoke an arbitrary third-party chat participant directly, so participants without a language model provider cannot currently be delegated to programmatically.
+
+The `/collaborate` command is the multi-agent workflow: the currently selected Chat model responds first, then each explicitly mentioned language model receives the shared transcript and can refine the task. Replies are labeled by model and streamed into the main Chat window.
+
+### External agents
+
+The extension can invoke command-line harnesses that are not registered as VS Code language models. Configure them in Settings JSON under `flm-vscode.externalAgents`; prompts are sent as a structured text transcript on stdin. Put `{prompt}` in an argument when a harness requires the prompt as a command-line argument instead.
+
+```json
+{
+	"flm-vscode.externalAgents": [
+		{
+			"name": "claude",
+			"command": "claude",
+			"args": ["-p"],
+			"latestVersionUrl": "https://registry.npmjs.org/@anthropic-ai%2Fclaude-code/latest",
+			"installCommand": "npm",
+			"installArgs": ["install", "-g", "@anthropic-ai/claude-code"]
+		},
+		{
+			"name": "hermes",
+			"command": "hermes",
+			"versionArgs": ["--version"],
+			"installCommand": "pip",
+			"installArgs": ["install", "--upgrade", "hermes-agent"]
+		},
+		{
+			"name": "deepseek",
+			"command": "dsh",
+			"args": ["--profile", "headless", "{prompt}"],
+			"versionArgs": ["--version"],
+			"latestVersionUrl": "https://registry.npmjs.org/@deepseek-ai%2Fdsh/latest",
+			"latestVersionField": "version",
+			"installCommand": "npm",
+			"installArgs": ["install", "--global", "@deepseek-ai/dsh@{version}"]
+		}
+	],
+	"flm-vscode.selectedAgent": "deepseek"
+}
+```
+
+Once per VS Code extension session, the selected external agent is checked with `versionArgs` and, when configured, `latestVersionUrl`. If it is missing or outdated, the extension asks before running `installCommand` with `installArgs`. Use `{version}` in installer arguments to pass the latest version. Replace the example release URLs and package names with the official metadata and installer for your Hermes and DeepSeek distributions. If no update URL is configured, the installed command is checked but no remote update comparison is made. The extension starts commands directly without a shell.
 
 ## External harnesses
 
@@ -88,7 +152,7 @@ The bridge uses stdin/stdout for MCP protocol messages and never writes logs to 
 
 Chat messages, tool schemas, and tool results are sent to the configured FastFlowLM server. This extension does not send requests to a hosted service of its own. API keys are sent as bearer tokens and should be configured in user settings rather than committed to workspace settings.
 
-The extension starts the configured server command with the current user permissions. Only configure commands and working directories you trust. Raw streaming output is disabled by default because it may contain prompts, reasoning, tool results, or other sensitive content.
+The extension starts the configured server command with the current user permissions. Only configure commands and working directories you trust. Native `@flm` file tools are limited to the first workspace folder and do not provide arbitrary hard-drive access. Raw streaming output is disabled by default because it may contain prompts, reasoning, tool results, or other sensitive content.
 
 ## Troubleshooting
 

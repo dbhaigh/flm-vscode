@@ -4,6 +4,26 @@ All notable changes to the "flm-vscode" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.1.4] - 2026-09-17
+
+- Added guarded workspace file tools for listing, reading, and writing project files from `@flm`.
+- Added direct language-model mentions and `/collaborate` for multi-agent workflows.
+- Added configurable external harness routing with session readiness and update checks.
+- Added agent activity tracking, persistent project memory support, and expanded setup and user documentation.
+
+## [0.1.4-beta.6] - 2026-09-16
+
+- Prepared the beta.6 testing package.
+- Added a quick-start guide and a full end-user manual covering setup, configuration, direct agent routing, MCP bridge usage, and performance tuning.
+
+## [0.1.4-beta.5] - 2026-09-16
+
+- Added explicit default harness or agent selection, including a FastFlowLM/none option.
+- Check the selected external agent once per extension session and prompt for missing or outdated installations.
+- Fixed TypeScript configuration so compile and packaging commands work again.
+- Made concurrent agent readiness checks share one in-flight session check.
+- Cleaned up streaming response readers when requests finish or are cancelled.
+
 ## [0.1.3] - 2026-09-16
 
 - Made MCP requests process sequentially so persistent memory writes and reads remain ordered.
