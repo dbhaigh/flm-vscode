@@ -37,22 +37,33 @@ For the complete end-user guide, see [USER_MANUAL.md](USER_MANUAL.md).
 
 ## Configuration
 
-Open **Settings** and search for **FastFlowLM**:
+Configure the extension from **File > Preferences > Settings**, then search for **FastFlowLM**, or edit the JSON settings directly with **Preferences: Open User Settings (JSON)** or **Preferences: Open Workspace Settings (JSON)**. Use user settings for the API key; workspace settings are convenient for project-specific server and model values but are committed with the project if you place them in `.vscode/settings.json`.
 
-- `flm-vscode.serverUrl`: API base URL. Defaults to `http://127.0.0.1:8000/v1`.
-- `flm-vscode.model`: Initial model identifier. Defaults to `qwen3.5:2b`.
-- `flm-vscode.apiKey`: Optional API key sent as a bearer token.
-- `flm-vscode.serverCommand`: Optional local server command, such as `python`.
-- `flm-vscode.serverArgs`: Arguments passed to the local server command.
-- `flm-vscode.serverCwd`: Optional working directory for the server process.
-- `flm-vscode.checkForUpdates`: Check FLM availability and releases when the extension activates. Defaults to `true`.
-- `flm-vscode.debugStreaming`: Include raw streaming responses and model reasoning in activity output. Defaults to `false`.
-- `flm-vscode.allowWorkspaceWrites`: Allow `@flm` to request workspace file writes. Defaults to `true`; every write still requires a VS Code confirmation dialog.
-- `flm-vscode.selectedAgent`: Legacy configuration fallback for the default harness. The **FastFlowLM: Select Harness or Agent** command stores its choice in extension state, so it remains reliable across extension reloads even when settings registration is stale. The selector offers `None` and configured external agents.
+The extension contributes these settings:
 
-When the configured model is unavailable, the extension selects the first model reported by the server. The `@flm` participant also includes earlier prompts and responses from the current participant conversation.
+- `flm-vscode.serverUrl`: Base URL for the OpenAI-compatible API, including `/v1`. Default: `http://127.0.0.1:8000/v1`.
+- `flm-vscode.model`: Model identifier sent to the server. Default: `qwen3.5:2b`.
+- `flm-vscode.apiKey`: Optional bearer-token API key. Default: empty. Do not commit this value to workspace settings.
+- `flm-vscode.serverCommand`: Optional executable used by **FastFlowLM: Start Server**, such as `python`. Leave empty when the server is managed separately.
+- `flm-vscode.serverArgs`: Array of string arguments passed to `serverCommand`. Default: `[]`.
+- `flm-vscode.serverCwd`: Optional working directory for the local server. If empty, the first open workspace folder is used.
+- `flm-vscode.checkForUpdates`: Check for the `flm` executable and newer FastFlowLM releases when the extension activates. Default: `true`.
+- `flm-vscode.debugStreaming`: Include raw streaming responses and model reasoning in the activity log and chat panel. Default: `false`; enable only when that output is safe to view.
+- `flm-vscode.allowWorkspaceWrites`: Allow `@flm` to request writes in the first workspace folder. Default: `true`; every write still requires a confirmation dialog.
+- `flm-vscode.memoryFile`: Workspace-relative JSON file used for persistent memory and agent activity. Default: `.flm/memory.json`.
+- `flm-vscode.externalAgents`: Array of external command-line harness definitions. Entries must include `name` and `command`; the current implementation supports the name `hermes`.
+- `flm-vscode.selectedAgent`: Default harness for `@flm` requests. Default: `none`. The **FastFlowLM: Select Harness or Agent** command saves the active choice in extension state and takes precedence over this setting.
 
-For example, a local Python server can be managed with:
+For a separately managed server, the minimum configuration is:
+
+```json
+{
+	"flm-vscode.serverUrl": "http://127.0.0.1:8000/v1",
+	"flm-vscode.model": "qwen3.5:2b"
+}
+```
+
+To let the extension start the server, set `serverCommand`, `serverArgs`, and, when needed, `serverCwd` together. `serverCommand` is executed directly, so put each command-line value in its own array item rather than quoting a complete command line:
 
 ```json
 {
@@ -61,6 +72,32 @@ For example, a local Python server can be managed with:
 	"flm-vscode.serverCwd": "C:/path/to/FastFlowLM"
 }
 ```
+
+To configure Hermes, add an object to `externalAgents`. `args` are passed to the harness; if an argument contains `{prompt}`, the prompt is substituted there, otherwise the prompt is sent on standard input. The version and installer fields are optional:
+
+```json
+{
+	"flm-vscode.externalAgents": [
+		{
+			"name": "hermes",
+			"command": "hermes",
+			"args": [],
+			"versionArgs": ["--version"],
+			"latestVersionUrl": "https://pypi.org/pypi/hermes-agent/json",
+			"latestVersionField": "info.version",
+			"installCommand": "pip",
+			"installArgs": ["install", "--upgrade", "hermes-agent"],
+			"cwd": "C:/path/to/project",
+			"env": {}
+		}
+	],
+	"flm-vscode.selectedAgent": "hermes"
+}
+```
+
+`latestVersionUrl` must return JSON, and `latestVersionField` is a dot-separated path to the version value. The extension checks a configured external agent once per extension session and asks before running its installer. **FastFlowLM: Select Harness or Agent** can select `None` or any valid configured external agent without editing `selectedAgent`.
+
+When the configured model is unavailable, the extension selects the first model reported by the server. The `@flm` participant also includes earlier prompts and responses from the current participant conversation.
 
 ## Usage
 

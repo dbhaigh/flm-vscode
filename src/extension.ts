@@ -562,7 +562,7 @@ class ServerManager {
 		try { process.kill(-processId, 'SIGTERM'); } catch { /* The process may have already exited. */ }
 	}
 
-	public async restart(): Promise<void> { this.stop(); await this.start(); }
+	public async restart(): Promise<void> { this.stop(); await this.ensureRunning(); }
 	public dispose(): void { this.stop(); }
 }
 
@@ -590,7 +590,7 @@ class ChatPanel {
 			switch (message.type) {
 				case 'send': await this.send(message.text ?? ''); break;
 				case 'models': this.post({ type: 'models', models: await this.client.listModels() }); break;
-				case 'start': await this.server.start(); this.post({ type: 'status', status: this.server.snapshot() }); break;
+				case 'start': await this.server.ensureRunning(); this.post({ type: 'status', status: this.server.snapshot() }); break;
 				case 'stop': this.server.stop(); this.post({ type: 'status', status: this.server.snapshot() }); break;
 				case 'restart': await this.server.restart(); this.post({ type: 'status', status: this.server.snapshot() }); break;
 				case 'model': this.model = message.model?.trim() || this.model; break;
@@ -1234,7 +1234,7 @@ export function activate(context: vscode.ExtensionContext) {
 					return;
 				}
 				case 'models': response.markdown(`Available models: ${(await client.listModels()).join(', ') || 'none'}.`); return;
-				case 'start': await server.start(); response.markdown('FastFlowLM server started.'); return;
+				case 'start': await server.ensureRunning(); response.markdown('FastFlowLM server is ready.'); return;
 				case 'stop': server.stop(); response.markdown('FastFlowLM server stopped.'); return;
 				case 'restart': await server.restart(); response.markdown('FastFlowLM server restarted.'); return;
 				case 'update': await checkFlmInstallation(reportStatus); response.markdown('FastFlowLM update check completed.'); return;
@@ -1271,7 +1271,7 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('flm-vscode.checkFlmInstallation', () => checkFlmInstallation(reportStatus)),
 		vscode.commands.registerCommand('flm-vscode.selectAgent', () => selectAgent()),
 		vscode.commands.registerCommand('flm-vscode.startServer', async () => {
-			try { await server.start(); void vscode.window.showInformationMessage('FastFlowLM server started.'); }
+			try { await server.ensureRunning(); void vscode.window.showInformationMessage('FastFlowLM server is ready.'); }
 			catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)); }
 		}),
 		vscode.commands.registerCommand('flm-vscode.stopServer', () => { server.stop(); void vscode.window.showInformationMessage('FastFlowLM server stopped.'); }),
