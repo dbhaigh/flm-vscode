@@ -25,6 +25,7 @@ For the complete end-user guide, see [USER_MANUAL.md](USER_MANUAL.md).
 - Chat with a FastFlowLM server through a webview panel.
 - Register FastFlowLM as a native VS Code Chat language model provider.
 - Use the `@flm` chat participant and `/status`, `/models`, `/start`, `/stop`, `/restart`, or `/update` commands to manage the server directly in Chat.
+- Invoke a Copilot language model directly with `@copilot`, or check availability with `/status`.
 - Let `@flm` inspect and update files in the first open workspace folder through model tool calls.
 - Address another language-model-backed chat member from `@flm`, for example `@flm ask @Copilot to review this function`.
 - Run `/collaborate` to pass a shared task through the selected model and explicitly mentioned agents, for example `@flm /collaborate @Copilot @qwen review this function`.
@@ -73,7 +74,7 @@ To let the extension start the server, set `serverCommand`, `serverArgs`, and, w
 }
 ```
 
-To configure Hermes, add an object to `externalAgents`. `args` are passed to the harness; if an argument contains `{prompt}`, the prompt is substituted there, otherwise the prompt is sent on standard input. The version and installer fields are optional:
+To configure Hermes or OpenCode, add an object to `externalAgents`. `args` are passed to the harness; if an argument contains `{prompt}`, the prompt is substituted there, otherwise the prompt is sent on standard input. The version and installer fields are optional:
 
 ```json
 {
@@ -89,9 +90,21 @@ To configure Hermes, add an object to `externalAgents`. `args` are passed to the
 			"installArgs": ["install", "--upgrade", "hermes-agent"],
 			"cwd": "C:/path/to/project",
 			"env": {}
+		},
+		{
+			"name": "opencode",
+			"command": "opencode",
+			"args": ["run", "{prompt}"],
+			"versionArgs": ["--version"],
+			"latestVersionUrl": "https://registry.npmjs.org/@anthropic/opencode/latest",
+			"latestVersionField": "version",
+			"installCommand": "npm",
+			"installArgs": ["install", "-g", "@anthropic/opencode@{version}"],
+			"cwd": "C:/path/to/project",
+			"env": {}
 		}
 	],
-	"flm-vscode.selectedAgent": "hermes"
+	"flm-vscode.selectedAgent": "opencode"
 }
 ```
 
@@ -119,7 +132,7 @@ The `/collaborate` command is the multi-agent workflow: the currently selected C
 
 ### External agents
 
-The extension can invoke Hermes, OpenCode, and other configured command-line harnesses that are not registered as VS Code language models. Use `@hermes` or `@opencode` directly in Chat, or select either harness as the default for `@flm`.
+The extension can invoke Hermes, OpenCode, and other configured command-line harnesses that are not registered as VS Code language models. Use `@hermes` or `@opencode` directly in Chat, or select either harness as the default for `@flm`. Copilot is available as a direct `@copilot` participant when VS Code exposes a Copilot language model.
 
 ```json
 {
@@ -131,6 +144,14 @@ The extension can invoke Hermes, OpenCode, and other configured command-line har
 			"installCommand": "pip",
 			"installArgs": ["install", "--upgrade", "hermes-agent"]
 		},
+		{
+			"name": "opencode",
+			"command": "opencode",
+			"args": ["run", "{prompt}"],
+			"versionArgs": ["--version"],
+			"installCommand": "npm",
+			"installArgs": ["install", "-g", "@anthropic/opencode@{version}"]
+		}
 	]
 }
 ```

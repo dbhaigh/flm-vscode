@@ -771,6 +771,22 @@ async function selectNamedChatModel(mention: string): Promise<vscode.LanguageMod
 		.some(value => value.toLowerCase() === mention));
 }
 
+async function streamChatModelResponse(
+	model: vscode.LanguageModelChat,
+	messages: ChatMessage[],
+	response: vscode.ChatResponseStream,
+	token: vscode.CancellationToken,
+	justification: string
+): Promise<void> {
+	const requestMessages = messages.map(message => message.role === 'assistant'
+		? vscode.LanguageModelChatMessage.Assistant(message.content ?? '')
+		: vscode.LanguageModelChatMessage.User(message.content ?? ''));
+	const modelResponse = await model.sendRequest(requestMessages, { justification }, token);
+	for await (const part of modelResponse.stream) {
+		if (part instanceof vscode.LanguageModelTextPart) {response.markdown(part.value);}
+	}
+}
+
 function externalAgentByName(mention: string): ExternalAgent | undefined {
 	const normalized = mention.trim().toLowerCase();
 	return configuredExternalAgents().find(agent => agent.name === normalized);
@@ -1151,15 +1167,8 @@ async function delegateToChatModel(
 	}
 	const model = await selectNamedChatModel(mention);
 	if (!model) {return false;}
-	const requestMessages = messages.map(message => message.role === 'assistant'
-		? vscode.LanguageModelChatMessage.Assistant(message.content ?? '')
-		: vscode.LanguageModelChatMessage.User(message.content ?? ''));
-	const modelResponse = await model.sendRequest(requestMessages, {
-		justification: 'Allow @flm to pass an explicitly addressed chat request to another language model.'
-	}, token);
-	for await (const part of modelResponse.stream) {
-		if (part instanceof vscode.LanguageModelTextPart) {response.markdown(part.value);}
-	}
+	await streamChatModelResponse(model, messages, response, token,
+		'Allow @flm to pass an explicitly addressed chat request to another language model.');
 	return true;
 }
 
@@ -1267,10 +1276,28 @@ export function activate(context: vscode.ExtensionContext) {
 	flmParticipant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'flm-vscode.png');
 	const hermesParticipant = registerExternalParticipant('flm-vscode.hermes', 'hermes');
 	const opencodeParticipant = registerExternalParticipant('flm-vscode.opencode', 'opencode');
+	const copilotParticipant = vscode.chat.createChatParticipant('flm-vscode.copilot', async (request, context, response, token) => {
+		try {
+			const model = await selectNamedChatModel('copilot');
+			if (request.command === 'status') {
+				response.markdown(model ? '@copilot is available.' : 'No Copilot language model is available in this VS Code session.');
+				return;
+			}
+			if (!model) {throw new Error('No Copilot language model is available in this VS Code session.');}
+			const messages = participantHistory(context.history);
+			messages.push({ role: 'user', content: request.prompt });
+			await streamChatModelResponse(model, messages, response, token,
+				'Allow @copilot to send this chat request to a Copilot language model.');
+		} catch (error) {
+			response.markdown(`@copilot error: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	});
+	copilotParticipant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'flm-vscode.png');
 	context.subscriptions.push(
 		flmParticipant,
 		hermesParticipant,
 		opencodeParticipant,
+		copilotParticipant,
 		vscode.lm.registerLanguageModelChatProvider('fastflowlm', new FastFlowLMProvider(client)),
 		vscode.commands.registerCommand('flm-vscode.openChat', () => chat.show()),
 		vscode.commands.registerCommand('flm-vscode.checkServer', async () => {

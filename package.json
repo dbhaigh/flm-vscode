@@ -34,6 +34,7 @@
     "onLanguageModelChatProvider:fastflowlm",
     "onChatParticipant:flm-vscode.flm",
     "onChatParticipant:flm-vscode.hermes",
+    "onChatParticipant:flm-vscode.copilot",
     "onChatParticipant:flm-vscode.opencode"
   ],
   "main": "./dist/extension.js",
@@ -127,6 +128,14 @@
         ]
       },
       {
+        "id": "flm-vscode.copilot",
+        "name": "copilot",
+        "description": "Send prompts directly to a Copilot language model.",
+        "commands": [
+          { "name": "status", "description": "Check whether a Copilot language model is available." }
+        ]
+      },
+      {
         "id": "flm-vscode.opencode",
         "name": "opencode",
         "description": "Use the configured OpenCode harness via the chat.",
@@ -203,7 +212,7 @@
             {
               "name": "opencode",
               "command": "opencode",
-              "args": ["-p", "{prompt}"],
+              "args": ["run", "{prompt}"],
               "versionArgs": ["--version"],
               "installCommand": "npm",
               "installArgs": ["install", "-g", "@anthropic/opencode@{version}"],
