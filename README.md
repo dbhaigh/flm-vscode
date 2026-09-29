@@ -51,7 +51,7 @@ The extension contributes these settings:
 - `flm-vscode.debugStreaming`: Include raw streaming responses and model reasoning in the activity log and chat panel. Default: `false`; enable only when that output is safe to view.
 - `flm-vscode.allowWorkspaceWrites`: Allow `@flm` to request writes in the first workspace folder. Default: `true`; every write still requires a confirmation dialog.
 - `flm-vscode.memoryFile`: Workspace-relative JSON file used for persistent memory and agent activity. Default: `.flm/memory.json`.
-- `flm-vscode.externalAgents`: Array of external command-line harness definitions. Entries must include `name` and `command`; the current implementation supports the name `hermes`.
+- `flm-vscode.externalAgents`: Array of external command-line harness definitions. Entries must include `name` and `command`; the current implementation supports the names `hermes` and `opencode`.
 - `flm-vscode.selectedAgent`: Default harness for `@flm` requests. Default: `none`. The **FastFlowLM: Select Harness or Agent** command saves the active choice in extension state and takes precedence over this setting.
 
 For a separately managed server, the minimum configuration is:
@@ -119,7 +119,7 @@ The `/collaborate` command is the multi-agent workflow: the currently selected C
 
 ### External agents
 
-The extension can invoke Hermes and other configured command-line harnesses that are not registered as VS Code language models.
+The extension can invoke Hermes, OpenCode, and other configured command-line harnesses that are not registered as VS Code language models. Use `@hermes` or `@opencode` directly in Chat, or select either harness as the default for `@flm`.
 
 ```json
 {

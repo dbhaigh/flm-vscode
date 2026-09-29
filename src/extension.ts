@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import crossSpawn from 'cross-spawn';
 import { ChildProcess, ChildProcessWithoutNullStreams, execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
@@ -820,22 +821,28 @@ function resolveWindowsCommand(command: string): string {
 
 function spawnExternalCommand(command: string, args: string[], options: Parameters<typeof spawn>[2] = {}): ChildProcessWithoutNullStreams {
 	const resolvedCommand = resolveWindowsCommand(command);
-	const isWindowsBatchFile = process.platform === 'win32' && ['.cmd', '.bat'].includes(extname(resolvedCommand).toLowerCase());
 	if (process.platform === 'win32' && extname(resolvedCommand).toLowerCase() === '.ps1') {
 		return spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', resolvedCommand, ...args], options) as ChildProcessWithoutNullStreams;
 	}
-	return spawn(resolvedCommand, args, { ...options, ...(isWindowsBatchFile ? { shell: true } : {}) }) as ChildProcessWithoutNullStreams;
+	// cross-spawn escapes arguments correctly for Windows .cmd/.bat shims (e.g. npm-installed CLIs).
+	// Node's own shell:true handling naively space-joins args, which can split a long prompt on
+	// whitespace and turn any "-something" substring into an unintended flag for the child command.
+	return crossSpawn(resolvedCommand, args, options) as ChildProcessWithoutNullStreams;
 }
 
 function execExternalCommand(command: string, args: string[], options: Parameters<typeof execFileSync>[2] = {}): Buffer | string {
 	const resolvedCommand = resolveWindowsCommand(command);
-	const isWindowsBatchFile = process.platform === 'win32' && ['.cmd', '.bat'].includes(extname(resolvedCommand).toLowerCase());
 	if (process.platform === 'win32' && extname(resolvedCommand).toLowerCase() === '.ps1') {
 		return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', resolvedCommand, ...args], options);
 	}
-	// Pass args separately (not a manually-quoted string) so Node's own Windows argv escaping stays correct.
-	if (!isWindowsBatchFile) {return execFileSync(resolvedCommand, args, options);}
-	return execFileSync('cmd.exe', ['/d', '/s', '/c', resolvedCommand, ...args], options);
+	const result = crossSpawn.sync(resolvedCommand, args, options);
+	if (result.error) {throw result.error;}
+	if (result.status) {
+		const error = new Error(`Command failed: ${resolvedCommand} ${args.join(' ')}`) as NodeJS.ErrnoException & { status: number };
+		error.status = result.status;
+		throw error;
+	}
+	return result.stdout;
 }
 
 function terminateChildProcess(child: ChildProcess | undefined): void {
@@ -1259,9 +1266,11 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	flmParticipant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'flm-vscode.png');
 	const hermesParticipant = registerExternalParticipant('flm-vscode.hermes', 'hermes');
+	const opencodeParticipant = registerExternalParticipant('flm-vscode.opencode', 'opencode');
 	context.subscriptions.push(
 		flmParticipant,
 		hermesParticipant,
+		opencodeParticipant,
 		vscode.lm.registerLanguageModelChatProvider('fastflowlm', new FastFlowLMProvider(client)),
 		vscode.commands.registerCommand('flm-vscode.openChat', () => chat.show()),
 		vscode.commands.registerCommand('flm-vscode.checkServer', async () => {

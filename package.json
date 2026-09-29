@@ -2,7 +2,7 @@
   "name": "flm-vscode",
   "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "AndrewHaigh",
   "author": {
     "name": "Andrew Haigh"
@@ -193,22 +193,39 @@
         },
         "flm-vscode.externalAgents": {
           "type": "array",
-          "default": [],
-          "description": "External harnesses that @flm may invoke by name, such as Hermes. Prompts are sent on stdin unless an argument contains {prompt}; version and installer settings enable update checks.",
+          "default": [
+            {
+              "name": "hermes",
+              "command": "hermes",
+              "args": ["--chat"],
+              "versionArgs": ["--version"]
+            },
+            {
+              "name": "opencode",
+              "command": "opencode",
+              "args": ["-p", "{prompt}"],
+              "versionArgs": ["--version"],
+              "installCommand": "npm",
+              "installArgs": ["install", "-g", "@anthropic/opencode@{version}"],
+              "latestVersionUrl": "https://registry.npmjs.org/@anthropic/opencode/latest",
+              "latestVersionField": "version"
+            }
+          ],
+          "description": "External harnesses that @flm may invoke by name, such as Hermes or OpenCode. Prompts are sent on stdin unless an argument contains {prompt}; version and installer settings enable update checks.",
           "items": {
             "type": "object",
             "required": ["name", "command"],
             "properties": {
-              "name": { "type": "string", "description": "Mention name, such as hermes." },
+              "name": { "type": "string", "description": "Mention name, such as hermes or opencode." },
               "command": { "type": "string", "description": "Executable command." },
-              "args": { "type": "array", "items": { "type": "string" }, "default": [] },
+              "args": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Command-line arguments; {prompt} is replaced with the conversation history." },
               "versionArgs": { "type": "array", "items": { "type": "string" }, "default": ["--version"], "description": "Arguments used to read the installed version." },
-              "latestVersionUrl": { "type": "string", "description": "URL returning JSON release metadata." },
+              "latestVersionUrl": { "type": "string", "description": "URL returning JSON release metadata for update checks." },
               "latestVersionField": { "type": "string", "default": "version", "description": "Dot-separated JSON field containing the latest version." },
               "installCommand": { "type": "string", "description": "Installer executable, such as npm or pip." },
               "installArgs": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Installer arguments; {version} is replaced with the latest version." },
-              "cwd": { "type": "string", "description": "Optional working directory." },
-              "env": { "type": "object", "additionalProperties": { "type": "string" }, "default": {} }
+              "cwd": { "type": "string", "description": "Optional working directory for the spawned process." },
+              "env": { "type": "object", "additionalProperties": { "type": "string" }, "default": {}, "description": "Environment variables to pass to the spawned process." }
             }
           }
         },
@@ -234,8 +251,12 @@
     "lint": "eslint src",
     "test": "vscode-test"
   },
+  "dependencies": {
+    "cross-spawn": "^7.0.6"
+  },
   "devDependencies": {
     "@types/vscode": "^1.137.0",
+    "@types/cross-spawn": "^6.0.6",
     "@types/mocha": "^10.0.10",
     "@types/node": "24.x",
     "typescript-eslint": "^8.61.1",
