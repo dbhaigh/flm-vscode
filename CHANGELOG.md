@@ -4,6 +4,17 @@ All notable changes to the "flm-vscode" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.1.10] - 2026-09-29
+
+- Added a `@copilot` chat participant that sends prompts directly to a Copilot language model, with a `/status` command to check availability.
+- Fixed the built-in OpenCode harness configuration to invoke `opencode run "{prompt}"` instead of the unsupported `-p` flag.
+- Updated the README and user manual to document the `@copilot` participant and the corrected OpenCode invocation.
+
+## [0.1.9] - 2026-09-22
+
+- Fixed **FastFlowLM: Start Server** and the `/start` chat and webview commands to reuse an already-running managed server instead of restarting it.
+- Restructured and expanded the README configuration section with a complete list of settings, minimum configuration examples, and a documented example for configuring the Hermes external harness.
+
 ## [0.1.8] - 2026-09-17
 
 - Hardened MCP project and memory file access against symlinks escaping the configured project root.

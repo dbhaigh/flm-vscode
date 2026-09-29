@@ -22,7 +22,7 @@ suite('Extension Test Suite', () => {
 				commands?: Array<{ command: string }>;
 				languageModelChatProviders?: Array<{ vendor: string }>;
 				chatParticipants?: Array<{ id: string; name: string }>;
-				configuration?: { properties?: Record<string, { password?: boolean }> };
+				configuration?: { properties?: Record<string, { password?: boolean; default?: unknown }> };
 			};
 		};
 		assert.deepStrictEqual(manifest.contributes?.commands?.map(command => command.command), [
@@ -38,8 +38,10 @@ suite('Extension Test Suite', () => {
 		assert.deepStrictEqual(manifest.contributes?.languageModelChatProviders?.map(provider => provider.vendor), ['fastflowlm']);
 		assert.deepStrictEqual(
 			manifest.contributes?.chatParticipants?.map(participant => participant.name).sort(),
-			['flm', 'hermes']
+			['copilot', 'flm', 'hermes', 'opencode']
 		);
+		const externalAgents = manifest.contributes?.configuration?.properties?.['flm-vscode.externalAgents']?.default as Array<{ name?: string; args?: string[] }>;
+		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'opencode')?.args, ['run', '{prompt}']);
 	});
 
 	test('limits chat history to the configured input budget', () => {
