@@ -42,7 +42,7 @@ const MAX_PERSISTENT_MEMORY_BYTES = 512 * 1024;
 const FLM_INSTALLER_URL = 'https://github.com/ROCm/FastFlowLM/releases/latest/download/flm-setup.msi';
 const FLM_LATEST_RELEASE_API = 'https://api.github.com/repos/ROCm/FastFlowLM/releases/latest';
 const SELECTED_AGENT_STORAGE_KEY = 'flm-vscode.selectedAgent';
-const supportedExternalAgents = new Set(['hermes']);
+const supportedExternalAgents = new Set(['hermes', 'opencode']);
 const externalAgentSessionChecks = new Map<string, Promise<void>>();
 let selectedAgentState: vscode.Memento | undefined;
 const workspaceFileTools: OpenAITool[] = [
