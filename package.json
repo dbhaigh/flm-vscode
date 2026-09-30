@@ -2,7 +2,7 @@
   "name": "flm-vscode",
   "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "publisher": "AndrewHaigh",
   "author": {
     "name": "Andrew Haigh"
@@ -33,9 +33,12 @@
   "activationEvents": [
     "onLanguageModelChatProvider:fastflowlm",
     "onChatParticipant:flm-vscode.flm",
+    "onChatParticipant:flm-vscode.aider",
+    "onChatParticipant:flm-vscode.codex",
     "onChatParticipant:flm-vscode.hermes",
     "onChatParticipant:flm-vscode.copilot",
-    "onChatParticipant:flm-vscode.opencode"
+    "onChatParticipant:flm-vscode.opencode",
+    "onChatParticipant:flm-vscode.pi"
   ],
   "main": "./dist/extension.js",
   "bin": {
@@ -105,6 +108,22 @@
       }
     ],
     "chatParticipants": [
+        {
+          "id": "flm-vscode.aider",
+          "name": "aider",
+          "description": "Use the configured Aider harness via the chat.",
+          "commands": [
+            { "name": "status", "description": "Check whether the configured Aider harness is available." }
+          ]
+        },
+        {
+          "id": "flm-vscode.codex",
+          "name": "codex",
+          "description": "Use the configured Codex harness via the chat.",
+          "commands": [
+            { "name": "status", "description": "Check whether the configured Codex harness is available." }
+          ]
+        },
       {
         "id": "flm-vscode.flm",
         "name": "flm",
@@ -142,6 +161,14 @@
         "commands": [
           { "name": "status", "description": "Check whether the configured OpenCode harness is available." }
         ]
+        },
+        {
+          "id": "flm-vscode.pi",
+          "name": "pi",
+          "description": "Use the configured Pi harness via the chat.",
+          "commands": [
+            { "name": "status", "description": "Check whether the configured Pi harness is available." }
+          ]
       }
     ],
     "configuration": {
@@ -204,6 +231,26 @@
           "type": "array",
           "default": [
             {
+              "name": "aider",
+              "command": "aider",
+              "args": ["--message", "{prompt}"],
+              "versionArgs": ["--version"],
+              "installCommand": "pip",
+              "installArgs": ["install", "--upgrade", "aider-chat"],
+              "latestVersionUrl": "https://pypi.org/pypi/aider-chat/json",
+              "latestVersionField": "info.version"
+            },
+            {
+              "name": "codex",
+              "command": "codex",
+              "args": ["exec", "{prompt}"],
+              "versionArgs": ["--version"],
+              "installCommand": "npm",
+              "installArgs": ["install", "-g", "@openai/codex@{version}"],
+              "latestVersionUrl": "https://registry.npmjs.org/@openai/codex/latest",
+              "latestVersionField": "version"
+            },
+            {
               "name": "hermes",
               "command": "hermes",
               "args": ["--chat"],
@@ -218,14 +265,24 @@
               "installArgs": ["install", "-g", "@anthropic/opencode@{version}"],
               "latestVersionUrl": "https://registry.npmjs.org/@anthropic/opencode/latest",
               "latestVersionField": "version"
+            },
+            {
+              "name": "pi",
+              "command": "pi",
+              "args": ["--print", "{prompt}"],
+              "versionArgs": ["--version"],
+              "installCommand": "npm",
+              "installArgs": ["install", "-g", "@mariozechner/pi-coding-agent@{version}"],
+              "latestVersionUrl": "https://registry.npmjs.org/@mariozechner/pi-coding-agent/latest",
+              "latestVersionField": "version"
             }
           ],
-          "description": "External harnesses that @flm may invoke by name, such as Hermes or OpenCode. Prompts are sent on stdin unless an argument contains {prompt}; version and installer settings enable update checks.",
+          "description": "External harnesses that @flm may invoke by name, such as Aider, Codex, Hermes, OpenCode, or Pi. Prompts are sent on stdin unless an argument contains {prompt}; version and installer settings enable update checks.",
           "items": {
             "type": "object",
             "required": ["name", "command"],
             "properties": {
-              "name": { "type": "string", "description": "Mention name, such as hermes or opencode." },
+              "name": { "type": "string", "description": "Mention name, such as aider, codex, hermes, opencode, or pi." },
               "command": { "type": "string", "description": "Executable command." },
               "args": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Command-line arguments; {prompt} is replaced with the conversation history." },
               "versionArgs": { "type": "array", "items": { "type": "string" }, "default": ["--version"], "description": "Arguments used to read the installed version." },

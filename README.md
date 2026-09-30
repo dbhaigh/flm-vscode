@@ -2,9 +2,9 @@
 
 Interact with and manage a FastFlowLM server from Visual Studio Code.
 
-## Version 0.1.8
+## Version 0.1.11
 
-Version 0.1.8 removes a non-functional built-in harness integration and keeps direct routing available for configured external agents such as Hermes.
+Version 0.1.11 adds built-in routing for Aider, Codex, Hermes, OpenCode, and Pi.
 
 ## Quick start
 
@@ -14,7 +14,7 @@ Version 0.1.8 removes a non-functional built-in harness integration and keeps di
    - `flm-vscode.serverUrl`
    - `flm-vscode.model`
    - `flm-vscode.apiKey` when needed
-4. Configure Hermes or another external agent under `flm-vscode.externalAgents` when external-agent routing is needed.
+4. Configure Aider, Codex, Hermes, OpenCode, Pi, or another external agent under `flm-vscode.externalAgents` when external-agent routing is needed.
 5. Open Chat and use `@flm` with a command like `/status` or a normal prompt.
 6. Use the command palette commands for `FastFlowLM: Check Server`, `FastFlowLM: Start Server`, and `FastFlowLM: Select Harness or Agent` when needed.
 
@@ -34,7 +34,7 @@ For the complete end-user guide, see [USER_MANUAL.md](USER_MANUAL.md).
 - Detect whether `flm` is installed on PATH and check for newer FastFlowLM releases.
 - Follow server output and model activity in the `FastFlowLM` output channel.
 - Configure the server URL, model, API key, command, arguments, and working directory.
-- Connect Hermes or another configured external agent through external harness routing.
+- Connect Aider, Codex, Hermes, OpenCode, Pi, or another configured external agent through external harness routing.
 
 ## Configuration
 
@@ -52,7 +52,7 @@ The extension contributes these settings:
 - `flm-vscode.debugStreaming`: Include raw streaming responses and model reasoning in the activity log and chat panel. Default: `false`; enable only when that output is safe to view.
 - `flm-vscode.allowWorkspaceWrites`: Allow `@flm` to request writes in the first workspace folder. Default: `true`; every write still requires a confirmation dialog.
 - `flm-vscode.memoryFile`: Workspace-relative JSON file used for persistent memory and agent activity. Default: `.flm/memory.json`.
-- `flm-vscode.externalAgents`: Array of external command-line harness definitions. Entries must include `name` and `command`; the current implementation supports the names `hermes` and `opencode`.
+- `flm-vscode.externalAgents`: Array of external command-line harness definitions. Entries must include `name` and `command`; the built-in definitions support `aider`, `codex`, `hermes`, `opencode`, and `pi`.
 - `flm-vscode.selectedAgent`: Default harness for `@flm` requests. Default: `none`. The **FastFlowLM: Select Harness or Agent** command saves the active choice in extension state and takes precedence over this setting.
 
 For a separately managed server, the minimum configuration is:
@@ -74,11 +74,27 @@ To let the extension start the server, set `serverCommand`, `serverArgs`, and, w
 }
 ```
 
-To configure Hermes or OpenCode, add an object to `externalAgents`. `args` are passed to the harness; if an argument contains `{prompt}`, the prompt is substituted there, otherwise the prompt is sent on standard input. The version and installer fields are optional:
+The extension includes default configurations for Aider, Codex, Hermes, OpenCode, and Pi. To customize a harness or add another external agent, add objects to `externalAgents`. `args` are passed to the harness; if an argument contains `{prompt}`, the prompt is substituted there, otherwise the prompt is sent on standard input. The version and installer fields are optional:
 
 ```json
 {
 	"flm-vscode.externalAgents": [
+		{
+			"name": "aider",
+			"command": "aider",
+			"args": ["--message", "{prompt}"],
+			"versionArgs": ["--version"],
+			"installCommand": "pip",
+			"installArgs": ["install", "--upgrade", "aider-chat"]
+		},
+		{
+			"name": "codex",
+			"command": "codex",
+			"args": ["exec", "{prompt}"],
+			"versionArgs": ["--version"],
+			"installCommand": "npm",
+			"installArgs": ["install", "-g", "@openai/codex@{version}"]
+		},
 		{
 			"name": "hermes",
 			"command": "hermes",
@@ -102,6 +118,14 @@ To configure Hermes or OpenCode, add an object to `externalAgents`. `args` are p
 			"installArgs": ["install", "-g", "@anthropic/opencode@{version}"],
 			"cwd": "C:/path/to/project",
 			"env": {}
+		},
+		{
+			"name": "pi",
+			"command": "pi",
+			"args": ["--print", "{prompt}"],
+			"versionArgs": ["--version"],
+			"installCommand": "npm",
+			"installArgs": ["install", "-g", "@mariozechner/pi-coding-agent@{version}"]
 		}
 	],
 	"flm-vscode.selectedAgent": "opencode"
@@ -132,11 +156,23 @@ The `/collaborate` command is the multi-agent workflow: the currently selected C
 
 ### External agents
 
-The extension can invoke Hermes, OpenCode, and other configured command-line harnesses that are not registered as VS Code language models. Use `@hermes` or `@opencode` directly in Chat, or select either harness as the default for `@flm`. Copilot is available as a direct `@copilot` participant when VS Code exposes a Copilot language model.
+The extension can invoke Aider, Codex, Hermes, OpenCode, Pi, and other configured command-line harnesses that are not registered as VS Code language models. Use `@aider`, `@codex`, `@hermes`, `@opencode`, or `@pi` directly in Chat, or select one as the default for `@flm`. Copilot is available as a direct `@copilot` participant when VS Code exposes a Copilot language model.
 
 ```json
 {
 	"flm-vscode.externalAgents": [
+		{
+			"name": "aider",
+			"command": "aider",
+			"args": ["--message", "{prompt}"],
+			"versionArgs": ["--version"]
+		},
+		{
+			"name": "codex",
+			"command": "codex",
+			"args": ["exec", "{prompt}"],
+			"versionArgs": ["--version"]
+		},
 		{
 			"name": "hermes",
 			"command": "hermes",
@@ -151,6 +187,12 @@ The extension can invoke Hermes, OpenCode, and other configured command-line har
 			"versionArgs": ["--version"],
 			"installCommand": "npm",
 			"installArgs": ["install", "-g", "@anthropic/opencode@{version}"]
+		},
+		{
+			"name": "pi",
+			"command": "pi",
+			"args": ["--print", "{prompt}"],
+			"versionArgs": ["--version"]
 		}
 	]
 }

@@ -43,7 +43,7 @@ const MAX_PERSISTENT_MEMORY_BYTES = 512 * 1024;
 const FLM_INSTALLER_URL = 'https://github.com/ROCm/FastFlowLM/releases/latest/download/flm-setup.msi';
 const FLM_LATEST_RELEASE_API = 'https://api.github.com/repos/ROCm/FastFlowLM/releases/latest';
 const SELECTED_AGENT_STORAGE_KEY = 'flm-vscode.selectedAgent';
-const supportedExternalAgents = new Set(['hermes', 'opencode']);
+const supportedExternalAgents = new Set(['aider', 'codex', 'hermes', 'opencode', 'pi']);
 const externalAgentSessionChecks = new Map<string, Promise<void>>();
 let selectedAgentState: vscode.Memento | undefined;
 const workspaceFileTools: OpenAITool[] = [
@@ -1274,8 +1274,11 @@ export function activate(context: vscode.ExtensionContext) {
 		} catch (error) { response.markdown(`FastFlowLM error: ${error instanceof Error ? error.message : String(error)}`); }
 	});
 	flmParticipant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'flm-vscode.png');
+	const aiderParticipant = registerExternalParticipant('flm-vscode.aider', 'aider');
+	const codexParticipant = registerExternalParticipant('flm-vscode.codex', 'codex');
 	const hermesParticipant = registerExternalParticipant('flm-vscode.hermes', 'hermes');
 	const opencodeParticipant = registerExternalParticipant('flm-vscode.opencode', 'opencode');
+	const piParticipant = registerExternalParticipant('flm-vscode.pi', 'pi');
 	const copilotParticipant = vscode.chat.createChatParticipant('flm-vscode.copilot', async (request, context, response, token) => {
 		try {
 			const model = await selectNamedChatModel('copilot');
@@ -1295,8 +1298,11 @@ export function activate(context: vscode.ExtensionContext) {
 	copilotParticipant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'flm-vscode.png');
 	context.subscriptions.push(
 		flmParticipant,
+		aiderParticipant,
+		codexParticipant,
 		hermesParticipant,
 		opencodeParticipant,
+		piParticipant,
 		copilotParticipant,
 		vscode.lm.registerLanguageModelChatProvider('fastflowlm', new FastFlowLMProvider(client)),
 		vscode.commands.registerCommand('flm-vscode.openChat', () => chat.show()),

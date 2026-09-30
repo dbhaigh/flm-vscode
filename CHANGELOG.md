@@ -4,6 +4,13 @@ All notable changes to the "flm-vscode" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.1.11] - 2026-09-30
+
+- Added built-in Aider, Codex, and Pi external harness participants and default configurations.
+- Added direct `@aider`, `@codex`, and `@pi` chat routing alongside Hermes and OpenCode.
+- Added version checks and optional installers for the supported harness packages.
+- Updated the README and user manual with harness commands and configuration examples.
+
 ## [0.1.10] - 2026-09-29
 
 - Added a `@copilot` chat participant that sends prompts directly to a Copilot language model, with a `/status` command to check availability.
