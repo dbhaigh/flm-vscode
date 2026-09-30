@@ -1,10 +1,10 @@
 # FLM-VSCode Extension User Manual
 
-This extension lets you work with a local or remote FastFlowLM server directly from VS Code, and it can also route selected prompts to configured external harnesses such as Hermes while keeping FastFlowLM available as the default local model.
+This extension lets you work with a local or remote FastFlowLM server directly from VS Code, and it can also route selected prompts to configured external harnesses such as Aider, Codex, Hermes, OpenCode, and Pi while keeping FastFlowLM available as the default local model.
 
-## Version 0.1.8
+## Version 0.1.11
 
-Version 0.1.8 removes a non-functional built-in harness integration. Direct Claude routing remains unavailable because Claude Code is available via Hermes.
+Version 0.1.11 adds built-in Aider, Codex, and Pi harness routing alongside Hermes and OpenCode. Direct Claude routing remains unavailable because Claude Code is available via Hermes.
 
 ## What this extension does
 
@@ -49,7 +49,7 @@ You can configure external command-line agents and select one as the default har
 
 This is useful when you want to use a different coding agent while still retaining FastFlowLM for project tooling and model routing.
 
-Supported choices include Hermes (`hermes`), OpenCode (`opencode`), and any other configured external harness. Copilot is available separately as a direct `@copilot` participant when VS Code exposes a Copilot language model.
+Supported choices include Aider (`aider`), Codex (`codex`), Hermes (`hermes`), OpenCode (`opencode`), Pi (`pi`), and any other configured external harness. Copilot is available separately as a direct `@copilot` participant when VS Code exposes a Copilot language model.
 
 ### 3. External agent properties
 
@@ -111,7 +111,7 @@ Open VS Code Settings and search for `FastFlowLM`.
 
 ### External agent settings
 
-- `flm-vscode.externalAgents`: Array of external harness settings, such as Hermes or OpenCode
+- `flm-vscode.externalAgents`: Array of external harness settings, such as Aider, Codex, Hermes, OpenCode, or Pi
 - `flm-vscode.selectedAgent`: Default configured harness name to use for ordinary `@flm` requests, or `none` to stay on FastFlowLM
 
 The command `FastFlowLM: Select Harness or Agent` lets you choose `None` or a configured external harness without editing settings manually.
@@ -126,6 +126,22 @@ The command `FastFlowLM: Select Harness or Agent` lets you choose `None` or a co
   "flm-vscode.selectedAgent": "hermes",
   "flm-vscode.externalAgents": [
     {
+      "name": "aider",
+      "command": "aider",
+      "args": ["--message", "{prompt}"],
+      "versionArgs": ["--version"],
+      "installCommand": "pip",
+      "installArgs": ["install", "--upgrade", "aider-chat"]
+    },
+    {
+      "name": "codex",
+      "command": "codex",
+      "args": ["exec", "{prompt}"],
+      "versionArgs": ["--version"],
+      "installCommand": "npm",
+      "installArgs": ["install", "-g", "@openai/codex@{version}"]
+    },
+    {
       "name": "hermes",
       "command": "hermes",
       "versionArgs": ["--version"],
@@ -139,6 +155,14 @@ The command `FastFlowLM: Select Harness or Agent` lets you choose `None` or a co
       "versionArgs": ["--version"],
       "installCommand": "npm",
       "installArgs": ["install", "-g", "@anthropic/opencode@{version}"]
+    },
+    {
+      "name": "pi",
+      "command": "pi",
+      "args": ["--print", "{prompt}"],
+      "versionArgs": ["--version"],
+      "installCommand": "npm",
+      "installArgs": ["install", "-g", "@mariozechner/pi-coding-agent@{version}"]
     }
   ]
 }
@@ -201,7 +225,7 @@ To get the best results from this extension:
 
 3. Use the right harness for the right job.
    - FastFlowLM for local project work and model routing
-   - Hermes or OpenCode for specialized workflows or tooling
+  - Aider, Codex, Hermes, OpenCode, or Pi for specialized workflows or tooling
 
 4. Keep the default agent aligned with the work you do most often.
    - Set `flm-vscode.selectedAgent` to the harness you want to use by default.

@@ -38,10 +38,13 @@ suite('Extension Test Suite', () => {
 		assert.deepStrictEqual(manifest.contributes?.languageModelChatProviders?.map(provider => provider.vendor), ['fastflowlm']);
 		assert.deepStrictEqual(
 			manifest.contributes?.chatParticipants?.map(participant => participant.name).sort(),
-			['copilot', 'flm', 'hermes', 'opencode']
+			['aider', 'codex', 'copilot', 'flm', 'hermes', 'opencode', 'pi']
 		);
 		const externalAgents = manifest.contributes?.configuration?.properties?.['flm-vscode.externalAgents']?.default as Array<{ name?: string; args?: string[] }>;
+		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'aider')?.args, ['--message', '{prompt}']);
+		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'codex')?.args, ['exec', '{prompt}']);
 		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'opencode')?.args, ['run', '{prompt}']);
+		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'pi')?.args, ['--print', '{prompt}']);
 	});
 
 	test('limits chat history to the configured input budget', () => {
