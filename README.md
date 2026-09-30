@@ -2,6 +2,17 @@
 
 Interact with and manage a FastFlowLM server from Visual Studio Code.
 
+## Version 0.1.11
+
+- Added built-in Aider, Codex, and Pi external harness participants and default configurations.
+- Added direct `@aider`, `@codex`, and `@pi` chat routing alongside Hermes and OpenCode.
+- Added version checks and optional installers for the supported harness packages.
+
+## Version 0.1.10
+
+- Added a `@copilot` chat participant with a `/status` command to check availability.
+- Fixed the built-in OpenCode harness configuration to invoke `opencode run "{prompt}"`.
+
 ## Version 0.1.9
 
 Version 0.1.9 fixes a compatibility problem that was causing the extension to not run correctly on VSCode(Stable) - my bad, I had been developing with the Insider's edition, and not doing proper regression testing for compatibility.  It's working now
