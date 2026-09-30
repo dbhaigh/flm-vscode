@@ -2,6 +2,14 @@
 
 Interact with and manage a FastFlowLM server from Visual Studio Code.
 
+## Version 0.1.11
+
+Aider, Pi, and codex support added
+
+## Version 0.1.10
+
+OpenCode support added
+
 ## Version 0.1.9
 
 Version 0.1.9 fixes a compatibility problem that was causing the extension to not run correctly on VSCode(Stable) - my bad, I had been developing with the Insider's edition, and not doing proper regression testing for compatibility.  It's working now
