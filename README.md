@@ -2,6 +2,12 @@
 
 Interact with and manage a FastFlowLM server from Visual Studio Code.
 
+## Version 0.1.12
+
+- Routed Aider and Codex harness requests to the configured FastFlowLM server.
+- Added a temporary authenticated Responses API bridge so Codex can use FastFlowLM's Chat Completions API.
+- Configured Aider's OpenAI-compatible endpoint, model, and API key from the FastFlowLM settings by default.
+
 ## Version 0.1.11
 
 - Added built-in Aider, Codex, and Pi external harness participants and default configurations.
@@ -19,7 +25,8 @@ Version 0.1.9 fixes a compatibility problem that was causing the extension to no
 
 ## Version 0.1.8
 
-Version 0.1.11 adds built-in routing for Aider, Codex, Hermes, OpenCode, and Pi.
+- Hardened MCP project and memory file access against symlinks escaping the configured project root.
+- Removed a non-functional built-in participant, harness routing, selector option, and documentation.
 
 ## Quick start
 

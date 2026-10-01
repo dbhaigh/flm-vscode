@@ -2,9 +2,9 @@
 
 This extension lets you work with a local or remote FastFlowLM server directly from VS Code and route prompts through Aider and Codex.
 
-## Version 0.1.11
+## Version 0.1.12
 
-The Aider and Codex harness integrations are verified to send requests to the configured local FastFlowLM server.
+The Aider and Codex harness integrations route requests to the configured FastFlowLM server. Aider uses the configured OpenAI-compatible endpoint, model, and API key by default. Codex uses a temporary authenticated loopback bridge to translate its Responses API requests to FastFlowLM's Chat Completions API.
 
 ## What this extension does
 

@@ -4,6 +4,13 @@ All notable changes to the "flm-vscode" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.1.12] - 2026-09-30
+
+- Routed Aider and Codex harness requests to the configured FastFlowLM server.
+- Added a temporary authenticated bridge from Codex's Responses API to FastFlowLM's Chat Completions API.
+- Configured Aider's OpenAI-compatible endpoint, model, and API key from FastFlowLM settings by default.
+- Updated the README and user manual to document the local-server harness routing.
+
 ## [0.1.11] - 2026-09-30
 
 - Added built-in Aider, Codex, and Pi external harness participants and default configurations.
