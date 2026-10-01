@@ -2,6 +2,10 @@
 
 Interact with and manage a FastFlowLM server from Visual Studio Code.
 
+## Version 0.1.16
+
+- Improved external harness cancellation by cleaning up child processes spawned by the harness, including Windows Hermes subprocesses.
+
 ## Version 0.1.15
 
 - Configured the built-in Aider harness for non-interactive use, disabling its interactive input, pretty output, update checks, and release notes.

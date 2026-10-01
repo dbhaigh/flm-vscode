@@ -2,6 +2,10 @@
 
 This extension lets you work with a local or remote FastFlowLM server directly from VS Code and route prompts through external harnesses and agents.
 
+## Version 0.1.16
+
+When an external harness request is cancelled or finishes, the extension now cleans up its child processes. On Windows, this includes subprocesses spawned by Hermes, preventing them from continuing to run after the request ends.
+
 ## Version 0.1.15
 
 The built-in Aider configuration now runs non-interactively, suppressing interactive input, styled output, update checks, and release notes while accepting prompts automatically. The built-in Hermes configuration now invokes `hermes -z "{prompt}"` to run each request in prompt mode.
