@@ -570,6 +570,8 @@ class ServerManager {
 
 let activeServer: ServerManager | undefined;
 
+const CHAT_LAYOUT_CSS = 'html,body{width:100%;height:100%;min-width:0;min-height:0;overflow:hidden}body{position:fixed;inset:0;box-sizing:border-box;display:grid;grid-template-rows:minmax(0,1fr) auto;overflow:hidden}.chat-output{min-width:0;min-height:0;overflow:auto}.composer{position:static;min-width:0;min-height:0;max-height:65vh;overflow-y:auto;border-top:1px solid var(--vscode-panel-border,var(--vscode-input-border,transparent));padding-top:10px}textarea{max-height:45vh}@media(max-height:420px){body{padding:8px}.composer{gap:4px;padding-top:6px;max-height:65vh}textarea{min-height:32px;max-height:35vh;resize:vertical}}';
+
 class ChatPanel {
 	private panel: vscode.WebviewPanel | undefined;
 	private messages: ChatMessage[] = [];
@@ -582,7 +584,9 @@ class ChatPanel {
 	public show(): void {
 		if (this.panel) { this.panel.reveal(vscode.ViewColumn.Beside); return; }
 		this.panel = vscode.window.createWebviewPanel('flm-vscode.chat', 'FastFlowLM', vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
-		this.panel.webview.html = this.html();
+		const html = this.html();
+		const toolbar = html.match(/<div class="toolbar">[\s\S]*?<\/div>/)?.[0] ?? '';
+		this.panel.webview.html = html.replace(toolbar, '').replace('<body>', '<body><div class="chat-output">').replace('<div class="composer">', `</div><div class="composer">${toolbar}`).replace('</style>', `${CHAT_LAYOUT_CSS}</style>`);
 		this.panel.webview.onDidReceiveMessage(message => this.handleMessage(message));
 		this.panel.onDidDispose(() => { this.cancel(); this.panel = undefined; });
 	}

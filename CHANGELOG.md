@@ -4,6 +4,12 @@ All notable changes to the "flm-vscode" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.1.14] - 2026-10-01
+
+- Improved the chat panel layout with independently scrolling output and a composer that stays accessible, including in short windows.
+- Moved the chat toolbar into the composer area.
+- Skipped version 0.1.13; the previous release was 0.1.12.
+
 ## [0.1.12] - 2026-09-30
 
 - Routed Aider and Codex harness requests to the configured FastFlowLM server.

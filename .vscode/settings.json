@@ -28,6 +28,38 @@
             "installArgs": ["install", "--upgrade", "aider-chat"],
             "latestVersionUrl": "https://pypi.org/pypi/aider-chat/json",
             "latestVersionField": "info.version"
-        }
+        },
+        {
+            "name": "hermes",
+            "command": "hermes",
+            "args": ["-z", "{prompt}"],
+            "versionArgs": ["--version"]
+        },
+        {
+            "name": "codex",
+            "command": "codex",
+            "args": ["exec", "{prompt}"],
+            "versionArgs": ["--version"],
+            "installCommand": "npm",
+            "installArgs": ["install", "-g", "@openai/codex@{version}"],
+            "latestVersionUrl": "https://registry.npmjs.org/@openai/codex/latest",
+            "latestVersionField": "version"
+        },
+        {
+            "name": "pi",
+            "command": "pi",
+            "args": ["--print", "{prompt}"],
+            "versionArgs": ["--version"],
+            "installCommand": "npm",
+            "installArgs": ["install", "-g", "@mariozechner/pi-coding-agent@{version}"],
+            "latestVersionUrl": "https://registry.npmjs.org/@mariozechner/pi-coding-agent/latest",
+            "latestVersionField": "version"
+        },
+        {
+            "name": "opencode",
+            "command": "opencode",
+            "args": ["run", "{prompt}"],
+            "versionArgs": ["--version"]
+        },
     ]
 }

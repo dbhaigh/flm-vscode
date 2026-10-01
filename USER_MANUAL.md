@@ -2,6 +2,10 @@
 
 This extension lets you work with a local or remote FastFlowLM server directly from VS Code and route prompts through Aider and Codex.
 
+## Version 0.1.14
+
+The chat panel now keeps its output in an independently scrollable region and keeps the composer accessible. The toolbar is placed with the composer, and the layout adapts to short windows. Version 0.1.13 was skipped; the previous release was 0.1.12.
+
 ## Version 0.1.12
 
 The Aider and Codex harness integrations route requests to the configured FastFlowLM server. Aider uses the configured OpenAI-compatible endpoint, model, and API key by default. Codex uses a temporary authenticated loopback bridge to translate its Responses API requests to FastFlowLM's Chat Completions API.

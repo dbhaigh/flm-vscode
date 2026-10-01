@@ -2,6 +2,12 @@
 
 Interact with and manage a FastFlowLM server from Visual Studio Code.
 
+## Version 0.1.14
+
+- Improved the chat panel layout with independently scrolling output and a composer that stays accessible, including in short windows.
+- Moved the chat toolbar into the composer area.
+- Version 0.1.13 was skipped; the previous release was 0.1.12.
+
 ## Version 0.1.12
 
 - Routed Aider and Codex harness requests to the configured FastFlowLM server.
