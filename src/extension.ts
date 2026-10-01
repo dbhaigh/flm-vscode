@@ -980,12 +980,50 @@ function execExternalCommand(command: string, args: string[], options: Parameter
 }
 
 function terminateChildProcess(child: ChildProcess | undefined): void {
-	if (!child?.pid || child.exitCode !== null) {return;}
+	if (!child?.pid) {return;}
 	if (process.platform === 'win32') {
 		try {execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });} catch { /* The process may have already exited. */ }
 		return;
 	}
 	try {process.kill(-child.pid, 'SIGTERM');} catch {try {child.kill();} catch { /* The process may have already exited. */ }}
+}
+
+function trackWindowsProcessTree(rootPid: number): { pids: Set<number>; stop: () => Promise<void> } {
+	const pids = new Set<number>();
+	const script = `$root = ${rootPid}; $seen = [Collections.Generic.HashSet[int]]::new(); while ($true) { $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue; $parents = [Collections.Generic.HashSet[int]]::new(); [void]$parents.Add($root); do { $added = $false; foreach ($item in $processes) { $id = [int]$item.ProcessId; if ($parents.Contains([int]$item.ParentProcessId)) { if ($seen.Add($id)) { Write-Output $id }; if ($parents.Add($id)) { $added = $true } } } } while ($added); if (-not (Get-Process -Id $root -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 500 }`;
+	const monitor = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+	let pending = '';
+	monitor.stdout?.on('data', data => {
+		pending += String(data);
+		const lines = pending.split(/\r?\n/);
+		pending = lines.pop() ?? '';
+		for (const line of lines) {
+			const pid = Number.parseInt(line.trim(), 10);
+			if (Number.isInteger(pid) && pid > 0) {pids.add(pid);}
+		}
+	});
+	monitor.on('error', () => {});
+	const capturePendingPid = () => {
+		const pid = Number.parseInt(pending.trim(), 10);
+		if (Number.isInteger(pid) && pid > 0) {pids.add(pid);}
+	};
+	return {
+		pids,
+		stop: () => new Promise(resolve => {
+			if (monitor.exitCode !== null || monitor.signalCode !== null) {capturePendingPid(); resolve(); return;}
+			monitor.once('close', () => {
+				capturePendingPid();
+				resolve();
+			});
+			monitor.kill();
+		})
+	};
+}
+
+function terminateWindowsProcessTree(pids: Set<number>): void {
+	for (const pid of pids) {
+		try {execFileSync('taskkill', ['/pid', String(pid), '/f'], { stdio: 'ignore' });} catch { /* The process may have already exited. */ }
+	}
 }
 
 function persistentMemoryPath(): string {
@@ -1174,11 +1212,15 @@ async function invokeExternalAgent(agent: ExternalAgent, messages: ChatMessage[]
 		const child = spawnExternalCommand(agent.command, args, {
 			cwd: workingDirectory,
 			windowsHide: true,
+			detached: process.platform !== 'win32',
 			env: environment
 		});
+		const processTree = agent.name === 'hermes' && process.platform === 'win32' && child.pid
+			? trackWindowsProcessTree(child.pid)
+			: undefined;
 		let output = '';
 		let errorOutput = '';
-		const cancellation = token.onCancellationRequested(() => child.kill());
+		const cancellation = token.onCancellationRequested(() => terminateChildProcess(child));
 		try {
 			if (agent.name !== 'aider' && !args.some(argument => argument.includes('{prompt}'))) {child.stdin.write(prompt);}
 			child.stdin.end();
@@ -1194,6 +1236,10 @@ async function invokeExternalAgent(agent: ExternalAgent, messages: ChatMessage[]
 			return output.trim();
 		} finally {
 			cancellation.dispose();
+			if (processTree) {
+				await processTree.stop();
+				terminateWindowsProcessTree(processTree.pids);
+			}
 			terminateChildProcess(child);
 		}
 	} catch (error) {
