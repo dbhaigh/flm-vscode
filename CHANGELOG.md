@@ -29,15 +29,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [0.1.7] - 2026-09-17
 
-- Removed the direct Claude harness and selector option because Claude Code is available via Hermes.
-- Limited **FastFlowLM: Select Harness or Agent** to `None` and `Hermes`, ignoring stale direct Claude entries in `flm-vscode.externalAgents`.
+- Removed a direct harness and selector option.
+- Limited **FastFlowLM: Select Harness or Agent** to `None` and `Hermes`, ignoring stale unsupported entries in `flm-vscode.externalAgents`.
 - Improved external harness diagnostics by preserving failure output from both stdout and stderr.
 - Kept external update checks limited to FastFlowLM and explicitly configured external harnesses.
 - Updated the README and user manual for the 0.1.7 publication scope.
 
 ## [0.1.6-beta.3] - 2026-09-17
 
-- Removed the direct Claude harness and selector option because Claude Code is available via Hermes.
 - Fixed a false "not installed" report for external harnesses launched through Windows `.cmd`/`.bat` shims, caused by double-escaped command-line quoting in the version check.
 
 ## [0.1.6-beta.1] - 2026-09-17

@@ -2,7 +2,8 @@ import * as assert from 'assert';
 import { createServer, Server } from 'node:http';
 
 import * as vscode from 'vscode';
-import { compareFlmVersions, externalAgentError, FastFlowLMClient, limitMessages, parseFlmVersion, readSelectedAgentPreference, requestedChatModels, updateSelectedAgent } from '../extension';
+import { buildChatCompletionRequest, FastFlowLMCodexBridge, mapResponsesInputToChatMessages } from '../codex-flm-bridge';
+import { compareFlmVersions, externalAgentArguments, externalAgentError, externalAgentWorkingDirectory, FastFlowLMClient, limitMessages, mergePiFastFlowLMProvider, parseFlmVersion, readSelectedAgentPreference, requestedChatModels, updateSelectedAgent } from '../extension';
 
 suite('Extension Test Suite', () => {
 	test('activates and registers the extension commands', async () => {
@@ -62,6 +63,135 @@ suite('Extension Test Suite', () => {
 			externalAgentError('hermes', 2, 'HTTP 400: Max length reached!').message,
 			'hermes rejected the request because its context is too long. Start a new chat or ask with less conversation history.'
 		);
+	});
+
+	test('routes Aider to the configured FastFlowLM endpoint and respects explicit flags', () => {
+		assert.deepStrictEqual(
+			externalAgentArguments('aider', ['--message', '{prompt}'], 'review this', 'http://127.0.0.1:8000/v1', 'qwen3.5:2b', ''),
+			['--model', 'openai/qwen3.5:2b', '--openai-api-base', 'http://127.0.0.1:8000/v1', '--openai-api-key', 'dummy_key', '--no-gitignore', '--no-show-model-warnings', '--yes-always', '--message', 'review this']
+		);
+		assert.deepStrictEqual(
+			externalAgentArguments('aider', [], 'review this', 'url', 'model', ''),
+			['--model', 'openai/model', '--openai-api-base', 'url', '--openai-api-key', 'dummy_key', '--no-gitignore', '--no-show-model-warnings', '--yes-always', '--message', 'review this']
+		);
+		assert.deepStrictEqual(
+			externalAgentArguments('aider', ['--model', 'openai/custom', '--openai-api-base=http://custom/v1', '--message', '{prompt}'], 'review this', 'http://127.0.0.1:8000/v1', 'qwen3.5:2b', 'secret'),
+			['--openai-api-key', 'secret', '--no-gitignore', '--no-show-model-warnings', '--yes-always', '--model', 'openai/custom', '--openai-api-base=http://custom/v1', '--message', 'review this']
+		);
+		assert.deepStrictEqual(
+			externalAgentArguments('aider', ['--message', '{prompt}'], 'review this', 'http://127.0.0.1:8000/v1', 'qwen3.5:2b', '', false),
+			['--model', 'openai/qwen3.5:2b', '--openai-api-base', 'http://127.0.0.1:8000/v1', '--openai-api-key', 'dummy_key', '--no-gitignore', '--no-show-model-warnings', '--yes-always', '--no-git', '--message', 'review this']
+		);
+		assert.deepStrictEqual(
+			externalAgentArguments('aider', ['--gitignore', '--message', '{prompt}'], 'review this', 'url', 'model', ''),
+			['--model', 'openai/model', '--openai-api-base', 'url', '--openai-api-key', 'dummy_key', '--no-show-model-warnings', '--yes-always', '--gitignore', '--message', 'review this']
+		);
+		assert.deepStrictEqual(externalAgentArguments('pi', ['--print', '{prompt}'], 'review this', 'url', 'model', ''), ['--provider', 'flm-vscode', '--model', 'model', '--print', 'review this']);
+		assert.deepStrictEqual(externalAgentArguments('pi', ['--provider', 'anthropic', '--model', 'sonnet', '--print', '{prompt}'], 'review this', 'url', 'model', ''), ['--provider', 'anthropic', '--model', 'sonnet', '--print', 'review this']);
+	});
+
+	test('uses the configured external-agent cwd before the workspace folder', () => {
+		assert.strictEqual(externalAgentWorkingDirectory(undefined, 'C:\\workspace'), 'C:\\workspace');
+		assert.strictEqual(externalAgentWorkingDirectory('C:\\agent-project', 'C:\\workspace'), 'C:\\agent-project');
+	});
+
+	test('routes Codex through a per-process FastFlowLM Responses provider', () => {
+		assert.deepStrictEqual(externalAgentArguments('codex', ['exec', '{prompt}'], 'review this', 'http://127.0.0.1:43210/v1', 'qwen3.5:2b', '', true, 'bridge-token'), [
+			'exec',
+			'-c', 'model_provider="flm-vscode"',
+			'-c', 'model_providers.flm-vscode.name="FastFlowLM"',
+			'-c', 'model_providers.flm-vscode.base_url="http://127.0.0.1:43210/v1"',
+			'-c', 'model_providers.flm-vscode.wire_api="responses"',
+			'-c', 'model_providers.flm-vscode.requires_openai_auth=false',
+			'-c', 'model_providers.flm-vscode.http_headers={Authorization="Bearer bridge-token"}',
+			'--model', 'qwen3.5:2b',
+			'review this'
+		]);
+	});
+
+	test('maps Codex Responses messages and function tools to Chat Completions', () => {
+		const payload = buildChatCompletionRequest({
+			instructions: 'Be concise.',
+			input: [
+				{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'List files.' }] },
+				{ type: 'function_call_output', call_id: 'call-1', output: 'a.ts' }
+			],
+			tools: [{ type: 'function', name: 'list_files', description: 'List files', parameters: { type: 'object' }, strict: true }],
+			max_output_tokens: 100
+		}, 'qwen3.5:2b');
+		assert.deepStrictEqual(payload.messages, [
+			{ role: 'user', content: 'Be concise.\n\nList files.' },
+			{ role: 'tool', tool_call_id: 'call-1', content: 'a.ts' }
+		]);
+		assert.deepStrictEqual(payload.tools, [{ type: 'function', function: { name: 'list_files', description: 'List files', parameters: { type: 'object' }, strict: true } }]);
+		assert.strictEqual(payload.max_tokens, 100);
+		assert.deepStrictEqual(mapResponsesInputToChatMessages('System instruction', 'Hi'), [{ role: 'user', content: 'System instruction\n\nHi' }]);
+	});
+
+	test('forwards Codex Responses calls to FastFlowLM and returns a Responses result', async () => {
+		let receivedBody: Record<string, unknown> | undefined;
+		let receivedAuthorization: string | undefined;
+		const flm = createServer((request, response) => {
+			if (request.method === 'GET') {
+				response.setHeader('Content-Type', 'application/json');
+				response.end(JSON.stringify({ object: 'list', data: [{ id: 'qwen3.5:2b' }] }));
+				return;
+			}
+			let body = '';
+			request.on('data', chunk => body += chunk);
+			request.on('end', () => {
+				receivedBody = JSON.parse(body) as Record<string, unknown>;
+				receivedAuthorization = request.headers.authorization;
+				response.setHeader('Content-Type', 'application/json');
+				response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'FastFlowLM reply' } }], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } }));
+			});
+		});
+		await listen(flm);
+		const address = flm.address();
+		assert.ok(address && typeof address !== 'string');
+		const bridge = new FastFlowLMCodexBridge(`http://127.0.0.1:${address.port}/v1`, 'qwen3.5:2b', 'local-key');
+		await bridge.start();
+		try {
+			const headers = { Authorization: `Bearer ${bridge.authorizationToken}` };
+			const models = await fetch(`${bridge.baseUrl}/models?client_version=0.159.3`, { headers });
+			assert.strictEqual(models.status, 200);
+			const catalog = await models.json() as { models: Array<{ slug: string; model_messages: { instructions_template: string } }> };
+			assert.deepStrictEqual(catalog.models.map(model => model.slug), ['qwen3.5:2b']);
+			assert.strictEqual(catalog.models[0].model_messages.instructions_template, '');
+			const response = await fetch(`${bridge.baseUrl}/responses?client_version=0.159.3`, {
+				method: 'POST',
+				headers: { ...headers, 'Content-Type': 'application/json' },
+				body: JSON.stringify({ instructions: 'Be brief.', input: 'Say hello.', stream: false })
+			});
+			assert.strictEqual(response.status, 200);
+			const result = await response.json() as { object: string; model: string; output: Array<{ type: string; content?: Array<{ text: string }> }>; usage: { total_tokens: number } };
+			assert.strictEqual(result.object, 'response');
+			assert.strictEqual(result.model, 'qwen3.5:2b');
+			assert.strictEqual(result.output[0].content?.[0].text, 'FastFlowLM reply');
+			assert.strictEqual(result.usage.total_tokens, 5);
+			assert.deepStrictEqual((receivedBody?.messages as Array<{ role: string; content: string }>).map(message => message.role), ['user']);
+			assert.strictEqual(receivedAuthorization, 'Bearer local-key');
+		} finally {
+			await bridge.close();
+			await close(flm);
+		}
+	});
+
+	test('merges the FastFlowLM Pi provider without discarding other Pi providers', () => {
+		const updated = mergePiFastFlowLMProvider({
+			settings: { theme: 'dark' },
+			providers: {
+				openai: { baseUrl: 'https://api.openai.com/v1' },
+				'flm-vscode': { models: [{ id: 'old-model' }, { id: 'qwen3.5:2b', name: 'old name' }] }
+			}
+		}, 'http://127.0.0.1:52625/v1', 'qwen3.5:2b');
+		const providers = updated.providers as Record<string, { baseUrl?: string; api?: string; apiKey?: string; models?: Array<{ id: string }> }>;
+		assert.deepStrictEqual(updated.settings, { theme: 'dark' });
+		assert.deepStrictEqual(providers.openai, { baseUrl: 'https://api.openai.com/v1' });
+		assert.strictEqual(providers['flm-vscode'].baseUrl, 'http://127.0.0.1:52625/v1');
+		assert.strictEqual(providers['flm-vscode'].api, 'openai-completions');
+		assert.strictEqual(providers['flm-vscode'].apiKey, '$FLM_VSCODE_PI_API_KEY');
+		assert.deepStrictEqual(providers['flm-vscode'].models?.map(configuredModel => configuredModel.id), ['old-model', 'qwen3.5:2b']);
 	});
 
 	test('parses and compares FLM versions', () => {

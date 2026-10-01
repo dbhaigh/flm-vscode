@@ -9,5 +9,25 @@
         "dist": true // set this to false to include "dist" folder in search results
     },
     // Turn off tsc task auto detection since we have the necessary tasks as npm scripts
-    "js/ts.tsc.autoDetect": "off"
+    "js/ts.tsc.autoDetect": "off",
+    "flm-vscode.externalAgents": [
+        {
+            "name": "aider",
+            "command": "aider",
+            "args": [
+                "--no-fancy-input",
+                "--no-pretty",
+                "--no-check-update",
+                "--no-show-release-notes",
+                "--yes-always",
+                "--message",
+                "{prompt}"
+            ],
+            "versionArgs": ["--version"],
+            "installCommand": "pip",
+            "installArgs": ["install", "--upgrade", "aider-chat"],
+            "latestVersionUrl": "https://pypi.org/pypi/aider-chat/json",
+            "latestVersionField": "info.version"
+        }
+    ]
 }

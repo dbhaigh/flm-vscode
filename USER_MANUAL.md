@@ -1,10 +1,10 @@
 # FLM-VSCode Extension User Manual
 
-This extension lets you work with a local or remote FastFlowLM server directly from VS Code, and it can also route selected prompts to configured external harnesses such as Aider, Codex, Hermes, OpenCode, and Pi while keeping FastFlowLM available as the default local model.
+This extension lets you work with a local or remote FastFlowLM server directly from VS Code and route prompts through Aider and Codex.
 
 ## Version 0.1.11
 
-Version 0.1.11 adds built-in Aider, Codex, and Pi harness routing alongside Hermes and OpenCode. Direct Claude routing remains unavailable because Claude Code is available via Hermes.
+The Aider and Codex harness integrations are verified to send requests to the configured local FastFlowLM server.
 
 ## What this extension does
 
@@ -16,7 +16,7 @@ The extension provides:
 - Workspace file tools for reading and writing files in the first workspace folder.
 - Support for direct prompts to external command-line harnesses and agents.
 - Version checks for installed harnesses and optional install/update flows.
-- An MCP bridge so external agents such as Hermes can discover and use FastFlowLM project tools.
+- An MCP bridge so Hermes and other compatible clients can use FastFlowLM chat, model, and project tools.
 
 ## Core abilities
 
@@ -51,6 +51,8 @@ This is useful when you want to use a different coding agent while still retaini
 
 Supported choices include Aider (`aider`), Codex (`codex`), Hermes (`hermes`), OpenCode (`opencode`), Pi (`pi`), and any other configured external harness. Copilot is available separately as a direct `@copilot` participant when VS Code exposes a Copilot language model.
 
+Direct `@aider` and `@codex` requests use the configured FastFlowLM server. Aider receives the configured OpenAI-compatible server URL, model, and API key. The extension bridges Codex's Responses API to FastFlowLM's Chat Completions API using a temporary authenticated loopback endpoint; it does not change the Codex user configuration.
+
 ### 3. External agent properties
 
 Each external harness can be configured with its own properties in Settings JSON:
@@ -67,6 +69,8 @@ Each external harness can be configured with its own properties in Settings JSON
 - `installArgs`: arguments to run when installing or upgrading
 
 Use `{prompt}` in `args` when the harness expects the prompt as a command-line argument rather than reading it from stdin.
+
+The default Pi harness is routed to the configured FastFlowLM `serverUrl` and `model`. On its first use, the extension adds or updates the `flm-vscode` provider in Pi's `models.json` under `PI_CODING_AGENT_DIR` (or `~/.pi/agent`), preserving other providers. The FastFlowLM API key is passed to Pi through the process environment and is not written to `models.json`. If Pi's `args` explicitly include `--provider` or `--model`, those arguments take precedence and automatic FastFlowLM routing is skipped.
 
 ### 4. Workspace-aware project tools
 
@@ -91,7 +95,7 @@ The extension ships with a bridge server at `dist/mcp-server.js`. It exposes too
 - `memory_write`
 - `memory_delete`
 
-These tools can be used by Hermes and other MCP clients.
+These tools can be used by Hermes and other compatible MCP clients.
 
 ## Settings reference
 
@@ -209,7 +213,7 @@ Configure the MCP server entry:
 }
 ```
 
-This lets Hermes or compatible MCP clients access FastFlowLM project tools and model tools.
+This lets Hermes or any compatible MCP client access FastFlowLM project tools and model tools.
 
 ## Best performance setup
 

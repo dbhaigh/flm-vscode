@@ -4,3 +4,4 @@ node_modules
 .vscode-test/
 *.vsix
 .flm/memory.json
+.aider*

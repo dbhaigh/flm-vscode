@@ -49,7 +49,8 @@ For the complete end-user guide, see [USER_MANUAL.md](USER_MANUAL.md).
 - Detect whether `flm` is installed on PATH and check for newer FastFlowLM releases.
 - Follow server output and model activity in the `FastFlowLM` output channel.
 - Configure the server URL, model, API key, command, arguments, and working directory.
-- Connect Aider, Codex, Hermes, OpenCode, Pi, or another configured external agent through external harness routing.
+- Route Aider and Codex requests to the configured local FastFlowLM server through their verified harness integrations.
+- Connect Hermes, OpenCode, Pi, or another configured external agent through external harness routing.
 
 ## Configuration
 
@@ -171,7 +172,9 @@ The `/collaborate` command is the multi-agent workflow: the currently selected C
 
 ### External agents
 
-The extension can invoke Aider, Codex, Hermes, OpenCode, Pi, and other configured command-line harnesses that are not registered as VS Code language models. Use `@aider`, `@codex`, `@hermes`, `@opencode`, or `@pi` directly in Chat, or select one as the default for `@flm`. Copilot is available as a direct `@copilot` participant when VS Code exposes a Copilot language model.
+The extension can invoke Aider, Codex, Hermes, OpenCode, Pi, and other configured command-line harnesses that are not registered as VS Code language models. Use `@aider`, `@codex`, `@hermes`, `@opencode`, or `@pi` directly in Chat, or select one as the default for `@flm`. Aider and Codex route model requests to the configured FastFlowLM server. Copilot is available as a direct `@copilot` participant when VS Code exposes a Copilot language model.
+
+By default, Aider uses the configured `flm-vscode.serverUrl`, `flm-vscode.model`, and `flm-vscode.apiKey` through its OpenAI-compatible provider. If no API key is configured, the extension supplies `dummy_key` for local servers that do not require authentication. Explicit Aider `--model`, `--openai-api-base`, and `--openai-api-key` arguments take precedence.
 
 ```json
 {
@@ -217,7 +220,7 @@ Once per VS Code extension session, the selected external agent is checked with 
 
 ## External harnesses
 
-The package includes `dist/mcp-server.js`, a stdio MCP server that lets Hermes and other MCP clients use FastFlowLM alongside the current project. It provides `fastflowlm_chat`, `fastflowlm_models`, `project_list_files`, `project_read_file`, and `project_write_file` tools, plus persistent `memory_read`, `memory_write`, and `memory_delete` tools.
+The package includes `dist/mcp-server.js`, a stdio MCP server that lets Hermes and other compatible MCP clients use FastFlowLM alongside the current project. It provides `fastflowlm_chat`, `fastflowlm_models`, `project_list_files`, `project_read_file`, and `project_write_file` tools, plus persistent `memory_read`, `memory_write`, and `memory_delete` tools.
 
 Build the extension, then configure the harness to launch `node` with the absolute path to `dist/mcp-server.js`. Set `FLM_PROJECT_ROOT` to the project directory and configure `FLM_SERVER_URL`, `FLM_MODEL`, and optionally `FLM_API_KEY` in the MCP process environment. For example:
 

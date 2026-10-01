@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import crossSpawn from 'cross-spawn';
+import { FastFlowLMCodexBridge } from './codex-flm-bridge';
 import { ChildProcess, ChildProcessWithoutNullStreams, execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 
 type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
@@ -622,7 +623,7 @@ class ChatPanel {
 				const agent = externalAgentByName(this.backend);
 				if (!agent) {throw new Error(`${this.backend} is not configured. Add it to FastFlowLM: External Agents.`);}
 				this.post({ type: 'activity', content: `Waiting for ${agent.name} to respond...` });
-				reply = await invokeExternalAgent(agent, this.messages, cancellation.token);
+				reply = await invokeExternalAgent(agent, this.messages, cancellation.token, this.client);
 				this.post({ type: 'assistant', content: reply });
 			}
 			this.messages.push({ role: 'assistant', content: reply });
@@ -645,7 +646,7 @@ class ChatPanel {
 		const nonce = randomBytes(16).toString('hex');
 		const backendOptions = ['<option value="fastflowlm">FastFlowLM</option>', ...configuredExternalAgents().map(agent => `<option value="${this.escape(agent.name)}">${this.escape(agent.name[0].toUpperCase() + agent.name.slice(1))}</option>`)].join('');
 		const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
-		return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>FastFlowLM</title><style>:root{color-scheme:light dark}body{margin:0;padding:18px;color:var(--vscode-foreground);background:var(--vscode-editor-background);font:13px var(--vscode-font-family)}h1{font-size:18px;margin:0 0 4px}p{color:var(--vscode-descriptionForeground);margin:0 0 16px}.toolbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}button,select,textarea{font:inherit;color:inherit;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,transparent);padding:7px 9px;border-radius:3px}button{cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:0}button:hover{background:var(--vscode-button-hoverBackground)}button:disabled{opacity:.55;cursor:default}#status{border-left:3px solid var(--vscode-charts-green);padding:7px 10px;margin-bottom:8px;background:var(--vscode-textCodeBlock-background)}#status.error{border-color:var(--vscode-errorForeground)}#activity{display:grid;gap:3px;margin-bottom:14px;color:var(--vscode-descriptionForeground);font-size:11px}#activity div{padding:3px 7px;border-left:2px solid var(--vscode-charts-blue);white-space:pre-wrap}#activity .raw{font-family:var(--vscode-editor-font-family);color:var(--vscode-foreground);border-left-color:var(--vscode-charts-orange);background:var(--vscode-textCodeBlock-background)}#messages{display:grid;gap:10px;margin-bottom:14px}.message{padding:10px 12px;white-space:pre-wrap;line-height:1.45;border-radius:5px}.user{background:var(--vscode-textBlockQuote-background)}.assistant{background:var(--vscode-editor-inactiveSelectionBackground)}.composer{display:grid;gap:7px;position:sticky;bottom:0;background:var(--vscode-editor-background);padding-top:8px}textarea{resize:vertical;min-height:62px}.row{display:flex;gap:7px;align-items:center}.row select{flex:1;min-width:0}.hint{font-size:11px;color:var(--vscode-descriptionForeground)}</style></head><body><h1>FastFlowLM</h1><p>Chat with FastFlowLM or a configured external harness.</p><div id="status">Server status: unknown</div><div id="activity" aria-live="polite"></div><div class="toolbar"><button data-action="start">Start</button><button data-action="stop">Stop</button><button data-action="restart">Restart</button><button data-action="models">Refresh models</button></div><div id="messages"></div><div class="composer"><div class="row"><select id="backend" aria-label="Chat provider">${backendOptions}</select><select id="model" aria-label="Model"><option>${this.escape(this.model)}</option></select><span class="hint">Configure agents and server in Settings</span></div><textarea id="prompt" placeholder="Ask your selected chat provider something..."></textarea><button id="send">Send</button></div><script nonce="${nonce}">const vscode=acquireVsCodeApi(),messages=document.getElementById('messages'),activity=document.getElementById('activity'),prompt=document.getElementById('prompt'),send=document.getElementById('send'),model=document.getElementById('model'),backend=document.getElementById('backend'),status=document.getElementById('status');let assistant;function add(role,content){const el=document.createElement('div');el.className='message '+role;el.textContent=content;messages.appendChild(el);el.scrollIntoView({behavior:'smooth',block:'nearest'});return el}function addActivity(content,raw){const item=document.createElement('div');if(raw)item.className='raw';item.textContent=content;activity.appendChild(item);item.scrollIntoView({behavior:'smooth',block:'nearest'})}function updateBackend(){const external=backend.value!=='fastflowlm';document.querySelectorAll('[data-action]').forEach(button=>button.disabled=external);model.disabled=external}function submit(){const text=prompt.value.trim();if(!text)return;vscode.postMessage({type:'send',text});prompt.value=''}send.addEventListener('click',submit);prompt.addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey))submit()});document.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',()=>vscode.postMessage({type:button.dataset.action})));model.addEventListener('change',()=>vscode.postMessage({type:'model',model:model.value}));backend.addEventListener('change',()=>{vscode.postMessage({type:'backend',backend:backend.value});updateBackend()});updateBackend();window.addEventListener('message',event=>{const message=event.data;if(message.type==='user'||message.type==='assistant')add(message.type,message.content);if(message.type==='assistantDelta'){if(!assistant)assistant=add('assistant','');assistant.textContent+=message.content}if(message.type==='assistant')assistant=undefined;if(message.type==='activity')addActivity(message.content,false);if(message.type==='raw')addActivity(message.content,true);if(message.type==='busy')send.disabled=message.busy;if(message.type==='error'){status.textContent=message.message;status.className='error'}if(message.type==='status'){status.className=message.status.state==='error'?'error':'';status.textContent='Server: '+message.status.state+(message.status.pid?' (PID '+message.status.pid+')':'')}});</script></body></html>`;
+				return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>FastFlowLM</title><style>:root{color-scheme:light dark}body{margin:0;padding:18px;color:var(--vscode-foreground);background:var(--vscode-editor-background);font:13px var(--vscode-font-family)}h1{font-size:18px;margin:0 0 4px}p{color:var(--vscode-descriptionForeground);margin:0 0 16px}.toolbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}button,select,textarea{font:inherit;color:inherit;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,transparent);padding:7px 9px;border-radius:3px}button{cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:0}button:hover{background:var(--vscode-button-hoverBackground)}button:disabled{opacity:.55;cursor:default}#status{border-left:3px solid var(--vscode-charts-green);padding:7px 10px;margin-bottom:8px;background:var(--vscode-textCodeBlock-background)}#status.error{border-color:var(--vscode-errorForeground)}#activity{display:grid;gap:3px;margin-bottom:14px;color:var(--vscode-descriptionForeground);font-size:11px}#activity div{padding:3px 7px;border-left:2px solid var(--vscode-charts-blue);white-space:pre-wrap}#activity .raw{font-family:var(--vscode-editor-font-family);color:var(--vscode-foreground);border-left-color:var(--vscode-charts-orange);background:var(--vscode-textCodeBlock-background)}#messages{display:grid;gap:10px;margin-bottom:14px}.message{padding:10px 12px;line-height:1.45;border-radius:5px}.message p{margin:0 0 9px}.message p:last-child{margin-bottom:0}.message pre{overflow:auto;padding:9px;background:var(--vscode-textCodeBlock-background);font-family:var(--vscode-editor-font-family)}.message code{font-family:var(--vscode-editor-font-family)}.message ul{padding-left:22px}.message h3,.message h4{margin:0 0 8px}.user{background:var(--vscode-textBlockQuote-background);white-space:pre-wrap}.assistant{background:var(--vscode-editor-inactiveSelectionBackground)}.composer{display:grid;gap:7px;position:sticky;bottom:0;background:var(--vscode-editor-background);padding-top:8px}textarea{resize:vertical;min-height:62px}.row{display:flex;gap:7px;align-items:center}.row select{flex:1;min-width:0}.hint{font-size:11px;color:var(--vscode-descriptionForeground)}</style></head><body><h1>FastFlowLM</h1><p>Chat with FastFlowLM or a configured external harness.</p><div id="status">Server status: unknown</div><div id="activity" aria-live="polite"></div><div class="toolbar"><button data-action="start">Start</button><button data-action="stop">Stop</button><button data-action="restart">Restart</button><button data-action="models">Refresh models</button></div><div id="messages"></div><div class="composer"><div class="row"><select id="backend" aria-label="Chat provider">${backendOptions}</select><select id="model" aria-label="Model"><option>${this.escape(this.model)}</option></select><span class="hint">Configure agents and server in Settings</span></div><textarea id="prompt" placeholder="Ask your selected chat provider something..."></textarea><button id="send">Send</button></div><script nonce="${nonce}">const vscode=acquireVsCodeApi(),messages=document.getElementById('messages'),activity=document.getElementById('activity'),prompt=document.getElementById('prompt'),send=document.getElementById('send'),model=document.getElementById('model'),backend=document.getElementById('backend'),status=document.getElementById('status');let assistant;function escapeHtml(value){return value.replace(/[&<>"']/g,character=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]||character))}function renderMarkdown(value){const code=[];let html=escapeHtml(value).replace(new RegExp(String.fromCharCode(96).repeat(3)+'[^\\n]*\\n?([\\s\\S]*?)'+String.fromCharCode(96).repeat(3),'g'),(_,content)=>{code.push('<pre><code>'+content.trim()+'</code></pre>');return '\\u0000'+(code.length-1)+'\\u0000'});html=html.replace(/^### (.+)$/gm,'<h4>$1</h4>').replace(/^## (.+)$/gm,'<h3>$1</h3>').replace(/^[-*] (.+)$/gm,'<li>$1</li>').replace(/(<li>.*<\\/li>\\n?)+/g,items=>'<ul>'+items+'</ul>').replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>').replace(new RegExp(String.fromCharCode(96)+'([^'+String.fromCharCode(96)+']+)'+String.fromCharCode(96),'g'),'<code>$1</code>').replace(/\\n\\n+/g,'</p><p>').replace(/\\n/g,'<br>');html='<p>'+html+'</p>';return html.replace(/<p>\\u0000(\\d+)\\u0000<\\/p>/g,(_,index)=>code[index]).replace(/\\u0000(\\d+)\\u0000/g,(_,index)=>code[index])}function add(role,content){const el=document.createElement('div');el.className='message '+role;el.dataset.raw=content;el.innerHTML=role==='assistant'?renderMarkdown(content):escapeHtml(content);messages.appendChild(el);el.scrollIntoView({behavior:'smooth',block:'nearest'});return el}function addActivity(content,raw){const item=document.createElement('div');if(raw)item.className='raw';item.textContent=content;activity.appendChild(item);item.scrollIntoView({behavior:'smooth',block:'nearest'})}function updateBackend(){const external=backend.value!=='fastflowlm';document.querySelectorAll('[data-action]').forEach(button=>button.disabled=external);model.disabled=external}function submit(){const text=prompt.value.trim();if(!text)return;vscode.postMessage({type:'send',text});prompt.value=''}send.addEventListener('click',submit);prompt.addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey))submit()});document.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',()=>vscode.postMessage({type:button.dataset.action})));model.addEventListener('change',()=>vscode.postMessage({type:'model',model:model.value}));backend.addEventListener('change',()=>{vscode.postMessage({type:'backend',backend:backend.value});updateBackend()});updateBackend();window.addEventListener('message',event=>{const message=event.data;if(message.type==='user'||message.type==='assistant')add(message.type,message.content);if(message.type==='assistantDelta'){if(!assistant)assistant=add('assistant','');assistant.dataset.raw+=(message.content||'');assistant.innerHTML=renderMarkdown(assistant.dataset.raw)}if(message.type==='assistant')assistant=undefined;if(message.type==='activity')addActivity(message.content,false);if(message.type==='raw')addActivity(message.content,true);if(message.type==='busy')send.disabled=message.busy;if(message.type==='error'){status.textContent=message.message;status.className='error'}if(message.type==='status'){status.className=message.status.state==='error'?'error':'';status.textContent='Server: '+message.status.state+(message.status.pid?' (PID '+message.status.pid+')':'')}});</script></body></html>`;
 	}
 
 	private escape(value: string): string { return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] ?? character)); }
@@ -808,7 +809,120 @@ function configuredExternalAgents(): ExternalAgent[] {
 }
 
 function externalAgentEnvironment(agent: ExternalAgent): NodeJS.ProcessEnv {
-	return { ...process.env, ...agent.env };
+	return { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', ...agent.env };
+}
+
+	export function externalAgentArguments(name: string, configuredArgs: string[], prompt: string, serverUrl: string, model: string, apiKey: string, isGitRepository = true, bridgeToken = ''): string[] {
+	const args = configuredArgs.map(argument => argument.replaceAll('{prompt}', prompt));
+		if (name === 'codex') {
+			if (args[0] !== 'exec') {throw new Error('The @codex participant requires the Codex exec command to use FastFlowLM.');}
+			args.splice(1, 0,
+				'-c', 'model_provider="flm-vscode"',
+				'-c', 'model_providers.flm-vscode.name="FastFlowLM"',
+				'-c', `model_providers.flm-vscode.base_url=${JSON.stringify(serverUrl)}`,
+				'-c', 'model_providers.flm-vscode.wire_api="responses"',
+				'-c', 'model_providers.flm-vscode.requires_openai_auth=false',
+				'-c', `model_providers.flm-vscode.http_headers={Authorization=${JSON.stringify(`Bearer ${bridgeToken}`)}}`,
+				'--model', model
+			);
+			return args;
+		}
+	if (name === 'pi') {
+		const hasOption = (option: string) => args.some(argument => argument === option || argument.startsWith(`${option}=`));
+		if (hasOption('--provider') || hasOption('--model')) {return args;}
+		return ['--provider', 'flm-vscode', '--model', model, ...args];
+	}
+	if (name !== 'aider') {return args;}
+		if (!isGitRepository && !args.some(argument => argument === '--git' || argument === '--no-git')) {
+			args.unshift('--no-git');
+		}
+	if (!args.some(argument => argument === '--yes-always' || argument === '-y')) {
+		args.unshift('--yes-always');
+	}
+	if (!args.some(argument => argument === '--no-show-model-warnings' || argument === '--show-model-warnings')) {
+		args.unshift('--no-show-model-warnings');
+	}
+	if (!args.some(argument => argument === '--no-gitignore' || argument === '--gitignore')) {
+		args.unshift('--no-gitignore');
+	}
+	const connectionArgs: string[] = [];
+	const hasOption = (option: string) => args.some(argument => argument === option || argument.startsWith(`${option}=`));
+	if (!hasOption('--message') && !args.some(argument => argument === '-m')) {
+		args.push('--message', prompt);
+	}
+	if (!hasOption('--model')) {connectionArgs.push('--model', model.startsWith('openai/') ? model : `openai/${model}`);}
+	if (!hasOption('--openai-api-base')) {connectionArgs.push('--openai-api-base', serverUrl);}
+	if (!hasOption('--openai-api-key')) {connectionArgs.push('--openai-api-key', apiKey || 'dummy_key');}
+	return [...connectionArgs, ...args];
+}
+
+export function externalAgentWorkingDirectory(configuredCwd: string | undefined, workspaceFolder: string | undefined): string | undefined {
+	return configuredCwd?.trim() || workspaceFolder;
+}
+
+function isGitWorkingTree(workingDirectory: string): boolean {
+	try {
+		return String(execExternalCommand('git', ['rev-parse', '--is-inside-work-tree'], {
+			cwd: workingDirectory,
+			encoding: 'utf8',
+			stdio: ['ignore', 'pipe', 'ignore']
+		})).trim() === 'true';
+	} catch {
+		return false;
+	}
+}
+
+export function mergePiFastFlowLMProvider(existing: unknown, serverUrl: string, model: string): Record<string, unknown> {
+	if (existing !== undefined && (!existing || typeof existing !== 'object' || Array.isArray(existing))) {
+		throw new Error('Pi models.json must contain a JSON object.');
+	}
+	const configuration = { ...(existing as Record<string, unknown> | undefined) };
+	const currentProviders = configuration.providers;
+	if (currentProviders !== undefined && (!currentProviders || typeof currentProviders !== 'object' || Array.isArray(currentProviders))) {
+		throw new Error('Pi models.json providers must contain a JSON object.');
+	}
+	const providers = { ...(currentProviders as Record<string, unknown> | undefined) };
+	const currentProvider = providers['flm-vscode'];
+	if (currentProvider !== undefined && (!currentProvider || typeof currentProvider !== 'object' || Array.isArray(currentProvider))) {
+		throw new Error('Pi models.json flm-vscode provider must contain a JSON object.');
+	}
+	const provider = { ...(currentProvider as Record<string, unknown> | undefined) };
+	const currentModels = provider.models;
+	if (currentModels !== undefined && !Array.isArray(currentModels)) {
+		throw new Error('Pi models.json flm-vscode models must be an array.');
+	}
+	const models = (currentModels as Array<Record<string, unknown>> | undefined) ?? [];
+	providers['flm-vscode'] = {
+		...provider,
+		baseUrl: serverUrl,
+		api: 'openai-completions',
+		apiKey: '$FLM_VSCODE_PI_API_KEY',
+		models: [
+			...models.filter(configuredModel => configuredModel?.id !== model),
+			{ id: model, name: model, contextWindow: 32768, maxTokens: MAX_OUTPUT_TOKENS, input: ['text'] }
+		]
+	};
+	return { ...configuration, providers };
+}
+
+async function configurePiFastFlowLM(serverUrl: string, model: string): Promise<void> {
+	const agentDirectory = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), '.pi', 'agent');
+	const modelsPath = join(agentDirectory, 'models.json');
+	let existing: unknown;
+	try {
+		existing = JSON.parse(await fs.readFile(modelsPath, 'utf8'));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {throw error;}
+	}
+	const updated = mergePiFastFlowLMProvider(existing, serverUrl, model);
+	await fs.mkdir(agentDirectory, { recursive: true });
+	const temporaryPath = `${modelsPath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+	try {
+		await fs.writeFile(temporaryPath, `${JSON.stringify(updated, null, 2)}\n`, 'utf8');
+		await fs.rename(temporaryPath, modelsPath);
+	} finally {
+		await fs.rm(temporaryPath, { force: true });
+	}
 }
 
 function externalAgentPrompt(messages: ChatMessage[]): string {
@@ -1015,22 +1129,54 @@ async function ensureSelectedExternalAgent(reportStatus: StatusReporter): Promis
 	}
 }
 
-async function invokeExternalAgent(agent: ExternalAgent, messages: ChatMessage[], token: vscode.CancellationToken): Promise<string> {
+async function invokeExternalAgent(agent: ExternalAgent, messages: ChatMessage[], token: vscode.CancellationToken, client: FastFlowLMClient): Promise<string> {
 	await recordAgentActivity(agent.name, 'started');
+	let codexBridge: FastFlowLMCodexBridge | undefined;
 	try {
 		await ensureExternalAgentInstalled(agent);
 		const prompt = externalAgentPrompt(messages);
-		const args = agent.args.map(argument => argument.replaceAll('{prompt}', prompt));
+		const configuration = vscode.workspace.getConfiguration('flm-vscode');
+		const workingDirectory = externalAgentWorkingDirectory(agent.cwd, vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+		if (agent.name === 'aider' && !workingDirectory) {
+			throw new Error('Open a workspace folder or configure a working directory before invoking @aider.');
+		}
+		let model = configuration.get<string>('model', 'qwen3.5:2b').trim();
+		if (agent.name === 'codex') {
+			model = await client.resolveModel(model);
+			codexBridge = new FastFlowLMCodexBridge(
+				configuration.get<string>('serverUrl', 'http://127.0.0.1:8000/v1').trim(),
+				model,
+				configuration.get<string>('apiKey', '').trim()
+			);
+			await codexBridge.start();
+		}
+		const args = externalAgentArguments(
+			agent.name,
+			agent.args,
+			prompt,
+			codexBridge?.baseUrl ?? configuration.get<string>('serverUrl', 'http://127.0.0.1:8000/v1').trim(),
+			model,
+			configuration.get<string>('apiKey', '').trim() || agent.env?.OPENAI_API_KEY || process.env.OPENAI_API_KEY || '',
+			agent.name !== 'aider' || (workingDirectory ? isGitWorkingTree(workingDirectory) : false),
+			codexBridge?.authorizationToken
+		);
+		const environment = externalAgentEnvironment(agent);
+		if (agent.name === 'pi' && !agent.args.some(argument => argument === '--provider' || argument.startsWith('--provider=') || argument === '--model' || argument.startsWith('--model='))) {
+			const serverUrl = configuration.get<string>('serverUrl', 'http://127.0.0.1:8000/v1').trim();
+			const model = configuration.get<string>('model', 'qwen3.5:2b').trim();
+			await configurePiFastFlowLM(serverUrl, model);
+			environment.FLM_VSCODE_PI_API_KEY = configuration.get<string>('apiKey', '').trim() || agent.env?.FLM_VSCODE_PI_API_KEY || process.env.FLM_VSCODE_PI_API_KEY || 'dummy_key';
+		}
 		const child = spawnExternalCommand(agent.command, args, {
-			cwd: agent.cwd,
+			cwd: workingDirectory,
 			windowsHide: true,
-			env: externalAgentEnvironment(agent)
+			env: environment
 		});
 		let output = '';
 		let errorOutput = '';
 		const cancellation = token.onCancellationRequested(() => child.kill());
 		try {
-			if (!args.some(argument => argument.includes('{prompt}'))) {child.stdin.write(prompt);}
+			if (agent.name !== 'aider' && !args.some(argument => argument.includes('{prompt}'))) {child.stdin.write(prompt);}
 			child.stdin.end();
 			child.stdout.on('data', data => output += String(data));
 			child.stderr.on('data', data => errorOutput += String(data));
@@ -1049,6 +1195,8 @@ async function invokeExternalAgent(agent: ExternalAgent, messages: ChatMessage[]
 	} catch (error) {
 		await recordAgentActivity(agent.name, 'failed', error instanceof Error ? error.message : String(error));
 		throw error;
+	} finally {
+		await codexBridge?.close();
 	}
 }
 
@@ -1064,7 +1212,7 @@ async function runExternalParticipant(
 	if (!agent) {throw new Error(`No external harness is configured for @${name}. Add it to flm-vscode.externalAgents.`);}
 	const messages = participantHistory(context.history);
 	messages.push({ role: 'user', content: request.prompt });
-	const ownReply = await invokeExternalAgent(agent, messages, token);
+	const ownReply = await invokeExternalAgent(agent, messages, token, client);
 	response.markdown(ownReply);
 	messages.push({ role: 'assistant', content: ownReply });
 
@@ -1072,7 +1220,7 @@ async function runExternalParticipant(
 		if (token.isCancellationRequested) {return;}
 		const peer = externalAgentByName(mention);
 		if (peer) {
-			const peerReply = await invokeExternalAgent(peer, messages, token);
+			const peerReply = await invokeExternalAgent(peer, messages, token, client);
 			response.markdown(`\n\n**${peer.name}:**\n\n${peerReply}`);
 			messages.push({ role: 'assistant', content: peerReply });
 			continue;
@@ -1119,7 +1267,7 @@ class MultiAgentCoordinator {
 				if (token.isCancellationRequested) {return;}
 				this.reportStatus(`Collaborating with ${externalAgent.name}.`);
 				response.markdown(`**${externalAgent.name}:**\n\n`);
-				const content = await invokeExternalAgent(externalAgent, messages, token);
+				const content = await invokeExternalAgent(externalAgent, messages, token, this.client);
 				response.markdown(content);
 				messages.push({ role: 'assistant', content });
 				response.markdown('\n\n');
@@ -1158,11 +1306,12 @@ async function delegateToChatModel(
 	mention: string,
 	messages: ChatMessage[],
 	response: vscode.ChatResponseStream,
-	token: vscode.CancellationToken
+	token: vscode.CancellationToken,
+	client: FastFlowLMClient
 ): Promise<boolean> {
 	const externalAgent = configuredExternalAgents().find(agent => agent.name === mention);
 	if (externalAgent) {
-		response.markdown(await invokeExternalAgent(externalAgent, messages, token));
+		response.markdown(await invokeExternalAgent(externalAgent, messages, token, client));
 		return true;
 	}
 	const model = await selectNamedChatModel(mention);
@@ -1265,7 +1414,7 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 			const selectedAgent = await ensureSelectedExternalAgent(reportStatus);
 			if (selectedAgent) {
-				response.markdown(await invokeExternalAgent(selectedAgent, messages, token));
+				response.markdown(await invokeExternalAgent(selectedAgent, messages, token, client));
 				return;
 			}
 			const configuredModel = vscode.workspace.getConfiguration('flm-vscode').get<string>('model', 'fastflowlm');
