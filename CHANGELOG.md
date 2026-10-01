@@ -4,6 +4,11 @@ All notable changes to the "flm-vscode" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.1.15] - 2026-10-01
+
+- Configured Aider's built-in harness to run without interactive prompts, styling, update checks, or release notes.
+- Changed the built-in Hermes harness to pass prompts directly in prompt mode.
+
 ## [0.1.14] - 2026-10-01
 
 - Improved the chat panel layout with independently scrolling output and a composer that stays accessible, including in short windows.

@@ -2,7 +2,7 @@
   "name": "flm-vscode",
   "displayName": "FastFlowLM-VSCode",
   "description": "Interact with and manage a FastFlowLM server from VS Code",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "publisher": "AndrewHaigh",
   "author": {
     "name": "Andrew Haigh"
@@ -233,7 +233,7 @@
             {
               "name": "aider",
               "command": "aider",
-              "args": ["--message", "{prompt}"],
+              "args": ["--no-fancy-input", "--no-pretty", "--no-check-update", "--no-show-release-notes", "--yes-always", "--message", "{prompt}"],
               "versionArgs": ["--version"],
               "installCommand": "pip",
               "installArgs": ["install", "--upgrade", "aider-chat"],
@@ -253,7 +253,7 @@
             {
               "name": "hermes",
               "command": "hermes",
-              "args": ["--chat"],
+              "args": ["-z", "{prompt}"],
               "versionArgs": ["--version"]
             },
             {

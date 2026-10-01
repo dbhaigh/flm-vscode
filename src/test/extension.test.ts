@@ -42,8 +42,9 @@ suite('Extension Test Suite', () => {
 			['aider', 'codex', 'copilot', 'flm', 'hermes', 'opencode', 'pi']
 		);
 		const externalAgents = manifest.contributes?.configuration?.properties?.['flm-vscode.externalAgents']?.default as Array<{ name?: string; args?: string[] }>;
-		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'aider')?.args, ['--message', '{prompt}']);
+		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'aider')?.args, ['--no-fancy-input', '--no-pretty', '--no-check-update', '--no-show-release-notes', '--yes-always', '--message', '{prompt}']);
 		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'codex')?.args, ['exec', '{prompt}']);
+		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'hermes')?.args, ['-z', '{prompt}']);
 		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'opencode')?.args, ['run', '{prompt}']);
 		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'pi')?.args, ['--print', '{prompt}']);
 	});

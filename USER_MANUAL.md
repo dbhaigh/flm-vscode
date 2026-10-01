@@ -1,6 +1,10 @@
 # FLM-VSCode Extension User Manual
 
-This extension lets you work with a local or remote FastFlowLM server directly from VS Code and route prompts through Aider and Codex.
+This extension lets you work with a local or remote FastFlowLM server directly from VS Code and route prompts through external harnesses and agents.
+
+## Version 0.1.15
+
+The built-in Aider configuration now runs non-interactively, suppressing interactive input, styled output, update checks, and release notes while accepting prompts automatically. The built-in Hermes configuration now invokes `hermes -z "{prompt}"` to run each request in prompt mode.
 
 ## Version 0.1.14
 
@@ -136,7 +140,7 @@ The command `FastFlowLM: Select Harness or Agent` lets you choose `None` or a co
     {
       "name": "aider",
       "command": "aider",
-      "args": ["--message", "{prompt}"],
+      "args": ["--no-fancy-input", "--no-pretty", "--no-check-update", "--no-show-release-notes", "--yes-always", "--message", "{prompt}"],
       "versionArgs": ["--version"],
       "installCommand": "pip",
       "installArgs": ["install", "--upgrade", "aider-chat"]
@@ -152,6 +156,7 @@ The command `FastFlowLM: Select Harness or Agent` lets you choose `None` or a co
     {
       "name": "hermes",
       "command": "hermes",
+      "args": ["-z", "{prompt}"],
       "versionArgs": ["--version"],
       "installCommand": "pip",
       "installArgs": ["install", "--upgrade", "hermes-agent"]

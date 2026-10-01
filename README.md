@@ -2,6 +2,11 @@
 
 Interact with and manage a FastFlowLM server from Visual Studio Code.
 
+## Version 0.1.15
+
+- Configured the built-in Aider harness for non-interactive use, disabling its interactive input, pretty output, update checks, and release notes.
+- Changed the built-in Hermes harness to run prompts directly with `hermes -z`.
+
 ## Version 0.1.14
 
 - Improved the chat panel layout with independently scrolling output and a composer that stays accessible, including in short windows.
