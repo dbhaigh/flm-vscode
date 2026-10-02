@@ -2,6 +2,10 @@
 
 Interact with and manage a FastFlowLM server from Visual Studio Code.
 
+## Version 0.1.17
+
+- Restores missing built-in Aider, Codex, Hermes, OpenCode, and Pi definitions in `flm-vscode.externalAgents` on activation, including after upgrades, without replacing customized definitions.
+
 ## Version 0.1.16
 
 - Improved external harness cancellation by cleaning up child processes spawned by the harness, including Windows Hermes subprocesses.

@@ -3,7 +3,7 @@ import { createServer, Server } from 'node:http';
 
 import * as vscode from 'vscode';
 import { buildChatCompletionRequest, FastFlowLMCodexBridge, mapResponsesInputToChatMessages } from '../codex-flm-bridge';
-import { compareFlmVersions, externalAgentArguments, externalAgentError, externalAgentWorkingDirectory, FastFlowLMClient, limitMessages, mergePiFastFlowLMProvider, parseFlmVersion, readSelectedAgentPreference, requestedChatModels, updateSelectedAgent } from '../extension';
+import { compareFlmVersions, externalAgentArguments, externalAgentError, externalAgentWorkingDirectory, FastFlowLMClient, limitMessages, mergeExternalAgentDefaults, mergePiFastFlowLMProvider, parseFlmVersion, readSelectedAgentPreference, requestedChatModels, updateSelectedAgent } from '../extension';
 
 suite('Extension Test Suite', () => {
 	test('activates and registers the extension commands', async () => {
@@ -47,6 +47,20 @@ suite('Extension Test Suite', () => {
 		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'hermes')?.args, ['-z', '{prompt}']);
 		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'opencode')?.args, ['run', '{prompt}']);
 		assert.deepStrictEqual(externalAgents.find(agent => agent.name === 'pi')?.args, ['--print', '{prompt}']);
+	});
+
+	test('adds missing default harnesses without replacing customized definitions', () => {
+		const configured = [{ name: 'aider', command: 'custom-aider', args: ['--custom'] }];
+		const defaults = [
+			{ name: 'aider', command: 'aider', args: ['--message', '{prompt}'] },
+			{ name: 'codex', command: 'codex', args: ['exec', '{prompt}'] },
+			{ name: 'hermes', command: 'hermes', args: ['-z', '{prompt}'] },
+			{ name: 'opencode', command: 'opencode', args: ['run', '{prompt}'] },
+			{ name: 'pi', command: 'pi', args: ['--print', '{prompt}'] }
+		];
+		const merged = mergeExternalAgentDefaults(configured, defaults) as Array<{ name: string; command: string }>;
+		assert.deepStrictEqual(merged.map(agent => agent.name), ['aider', 'codex', 'hermes', 'opencode', 'pi']);
+		assert.strictEqual(merged[0].command, 'custom-aider');
 	});
 
 	test('limits chat history to the configured input budget', () => {

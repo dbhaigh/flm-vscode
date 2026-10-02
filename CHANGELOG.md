@@ -4,6 +4,10 @@ All notable changes to the "flm-vscode" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.1.17] - 2026-10-02
+
+- Restored missing built-in external harness definitions on activation, including after upgrades, while preserving customized definitions.
+
 ## [0.1.16] - 2026-10-01
 
 - Improved external harness cancellation by terminating the full child process tree, including Windows Hermes subprocesses.

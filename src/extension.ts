@@ -812,6 +812,39 @@ function configuredExternalAgents(): ExternalAgent[] {
 	});
 }
 
+export function mergeExternalAgentDefaults(configured: unknown, defaults: unknown): unknown[] {
+	const agents = Array.isArray(configured) ? configured : [];
+	const names = new Set(agents.flatMap(value => {
+		if (!value || typeof value !== 'object') {return [];}
+		const name = (value as Record<string, unknown>).name;
+		return typeof name === 'string' ? [name.trim().toLowerCase()] : [];
+	}));
+	const missing = (Array.isArray(defaults) ? defaults : []).filter(value => {
+		if (!value || typeof value !== 'object') {return false;}
+		const name = (value as Record<string, unknown>).name;
+		return typeof name === 'string' && supportedExternalAgents.has(name.trim().toLowerCase()) && !names.has(name.trim().toLowerCase());
+	});
+	return [...agents, ...missing];
+}
+
+export async function ensureExternalAgentSettings(): Promise<void> {
+	const folder = vscode.workspace.workspaceFolders?.[0];
+	const configuration = vscode.workspace.getConfiguration('flm-vscode', folder?.uri);
+	const inspected = configuration.inspect<unknown[]>('externalAgents');
+	const defaults = inspected?.defaultValue ?? [];
+	const configured = inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue ?? defaults;
+	const merged = mergeExternalAgentDefaults(configured, defaults);
+	const hasExplicitValue = inspected?.workspaceFolderValue !== undefined || inspected?.workspaceValue !== undefined || inspected?.globalValue !== undefined;
+	if (hasExplicitValue && merged.length === configured.length) {return;}
+
+	const target = inspected?.workspaceFolderValue !== undefined
+		? vscode.ConfigurationTarget.WorkspaceFolder
+		: inspected?.workspaceValue !== undefined
+			? vscode.ConfigurationTarget.Workspace
+			: vscode.ConfigurationTarget.Global;
+	await configuration.update('externalAgents', merged, target);
+}
+
 function externalAgentEnvironment(agent: ExternalAgent): NodeJS.ProcessEnv {
 	return { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', ...agent.env };
 }
@@ -1404,9 +1437,11 @@ async function selectAgent(): Promise<void> {
 	}
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
 	selectedAgentState = context.globalState;
 	const output = vscode.window.createOutputChannel('FastFlowLM');
+	try {await ensureExternalAgentSettings();}
+	catch (error) {output.appendLine(`Could not ensure external harness settings: ${error instanceof Error ? error.message : String(error)}`);}
 	let chatPanel: ChatPanel | undefined;
 	const reportStatus: StatusReporter = message => {
 		output.appendLine(`[${new Date().toLocaleTimeString()}] ${message}`);

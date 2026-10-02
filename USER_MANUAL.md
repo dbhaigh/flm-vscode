@@ -2,6 +2,10 @@
 
 This extension lets you work with a local or remote FastFlowLM server directly from VS Code and route prompts through external harnesses and agents.
 
+## Version 0.1.17
+
+On activation, the extension checks `flm-vscode.externalAgents` for the built-in Aider, Codex, Hermes, OpenCode, and Pi definitions. If any are missing, it adds them to the settings scope that contains the current value. Existing harness definitions and custom entries are preserved. This also repairs incomplete settings after an extension upgrade.
+
 ## Version 0.1.16
 
 When an external harness request is cancelled or finishes, the extension now cleans up its child processes. On Windows, this includes subprocesses spawned by Hermes, preventing them from continuing to run after the request ends.
@@ -127,7 +131,7 @@ Open VS Code Settings and search for `FastFlowLM`.
 
 ### External agent settings
 
-- `flm-vscode.externalAgents`: Array of external harness settings, such as Aider, Codex, Hermes, OpenCode, or Pi
+- `flm-vscode.externalAgents`: Array of external harness settings, such as Aider, Codex, Hermes, OpenCode, or Pi. Missing built-in entries are restored on activation without replacing existing definitions.
 - `flm-vscode.selectedAgent`: Default configured harness name to use for ordinary `@flm` requests, or `none` to stay on FastFlowLM
 
 The command `FastFlowLM: Select Harness or Agent` lets you choose `None` or a configured external harness without editing settings manually.
